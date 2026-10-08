@@ -1,0 +1,10 @@
+{
+  "name": "Ms Mèo's Practice Web",
+  "description": "Interactive English shadowing, dictation, and conversational practice web app with speech synthesis, voice recognition, and cute cat teacher Ms Mèo for high school learners.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
