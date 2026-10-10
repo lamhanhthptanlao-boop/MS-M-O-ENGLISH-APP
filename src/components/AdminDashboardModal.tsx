@@ -17,7 +17,7 @@ import {
   AlertCircle,
   ExternalLink,
 } from 'lucide-react';
-import { Assignment, AssignmentSubmission } from '../types';
+import { Assignment, AssignmentSubmission, AssignedTaskType } from '../types';
 import {
   fetchAssignments,
   fetchSubmissions,
@@ -98,10 +98,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     await loadAllAssignments();
   };
 
-  const handleCopyLink = (assignmentId: string) => {
+  const handleCopyLink = (assignmentId: string, taskType?: AssignedTaskType) => {
     if (typeof window === 'undefined') return;
-    const url = new URL(window.location.href);
+    const url = new URL(window.location.origin + window.location.pathname);
     url.searchParams.set('assignment', assignmentId);
+    if (taskType && taskType !== 'all') {
+      url.searchParams.set('task', taskType);
+    }
     navigator.clipboard.writeText(url.toString());
     setCopiedId(assignmentId);
     setTimeout(() => setCopiedId(null), 3000);
@@ -329,7 +332,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleCopyLink(assignment.id);
+                            handleCopyLink(assignment.id, assignment.assignedTask);
                           }}
                           className="text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1"
                         >
@@ -402,7 +405,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => handleCopyLink(selectedAssignment.id)}
+                        onClick={() => handleCopyLink(selectedAssignment.id, selectedAssignment.assignedTask)}
                         className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs ${
                           copiedId === selectedAssignment.id
                             ? 'bg-emerald-600 text-white'

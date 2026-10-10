@@ -156,6 +156,8 @@ export default function App() {
 
   // Student mode is active when opening via shared link or when toggling preview
   const isStudentMode = activeAssignment !== null || isStudentPreview;
+  // Locked student task: true when student opened a shared assignment link with a specific task
+  const isLockedStudentTask = !!activeAssignment && assignedTaskType !== 'all';
 
   // Parse raw text into structured sentences
   const parsedSentences = useMemo(() => {
@@ -248,6 +250,13 @@ export default function App() {
       }
     }
   }, []);
+
+  // Guard: If student has an active assignment link, enforce 'practice' view so they cannot navigate away
+  useEffect(() => {
+    if (activeAssignment && currentView !== 'practice') {
+      setCurrentView('practice');
+    }
+  }, [activeAssignment, currentView]);
 
   // Compute live student practice stats
   const shadowingAvg = useMemo(() => {
@@ -363,6 +372,10 @@ export default function App() {
   };
 
   const handleSelectTabFromHeader = (tabId: typeof activeTab) => {
+    // If student has an active assignment link with a dedicated task, do not allow changing tasks
+    if (isLockedStudentTask) {
+      return;
+    }
     setIsLessonGenerated(true);
     setActiveTab(tabId);
     setTimeout(() => {
@@ -469,6 +482,40 @@ export default function App() {
     setSavedLessons((prev) => prev.filter((l) => l.id !== lessonId));
   };
 
+  const renderLockedTaskBanner = (taskNameEn: string, taskNameVi: string, icon: string) => (
+    <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-4 rounded-3xl border border-indigo-700/60 shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-2xl bg-amber-400 text-slate-950 font-black flex items-center justify-center text-lg shadow-sm shrink-0">
+          {icon}
+        </div>
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-black uppercase tracking-wider text-amber-300 bg-amber-400/20 px-2.5 py-0.5 rounded-full border border-amber-400/30 flex items-center gap-1">
+              <span>🔒</span>
+              <span>{language === 'en' ? 'Assigned Task Link' : 'Nhiệm vụ riêng được giao'}</span>
+            </span>
+            <span className="text-xs font-bold text-white">
+              {language === 'en' ? taskNameEn : taskNameVi}
+            </span>
+          </div>
+          <p className="text-xs text-indigo-200 mt-1">
+            {language === 'en'
+              ? 'You have permission to practice only this assigned task. Complete this activity and submit your homework.'
+              : 'Học sinh chỉ có quyền thực hành nội dung nhiệm vụ này theo link của giáo viên. Hãy hoàn thành và bấm Nộp bài.'}
+          </p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => setIsSubmitHomeworkModalOpen(true)}
+        className="px-4 py-2 rounded-xl text-xs font-black text-slate-900 bg-amber-400 hover:bg-amber-300 shadow-md transition-all hover:scale-102 ring-2 ring-amber-200 flex items-center gap-1.5 shrink-0"
+      >
+        <Send className="w-3.5 h-3.5 text-slate-900" />
+        <span>{language === 'en' ? 'Submit Homework' : 'Nộp bài tập'}</span>
+      </button>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-[#FDF4F8] text-slate-700 flex flex-col antialiased selection:bg-pink-200 selection:text-pink-900">
       {/* 1. Header (Home first, dedicated Soạn bài, distinct standalone buttons) */}
@@ -479,10 +526,12 @@ export default function App() {
         onToggleLanguage={handleToggleLanguage}
         currentView={currentView}
         onGoHome={() => {
+          if (isLockedStudentTask) return;
           setCurrentView('home');
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
         onOpenCreator={() => {
+          if (isLockedStudentTask) return;
           setCurrentView('creator');
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
@@ -503,6 +552,8 @@ export default function App() {
         onOpenSubmitModal={() => setIsSubmitHomeworkModalOpen(true)}
         isStudentPreview={isStudentPreview}
         onToggleStudentPreview={() => setIsStudentPreview(!isStudentPreview)}
+        activeAssignment={activeAssignment}
+        assignedTaskType={assignedTaskType}
       />
 
       {/* Student Assignment Banner (when doing homework via shared link) */}
@@ -511,7 +562,8 @@ export default function App() {
           assignment={activeAssignment}
           practiceStats={livePracticeStats}
           onOpenSubmitModal={() => setIsSubmitHomeworkModalOpen(true)}
-          onExitAssignmentMode={() => setActiveAssignment(null)}
+          assignedTaskType={assignedTaskType}
+          language={language}
         />
       )}
 
@@ -621,40 +673,208 @@ export default function App() {
         {/* ========================================================================= */}
         {currentView === 'practice' && (
           <div className="space-y-6 animate-fadeIn">
-            {/* If Student Mode and specifically assigned Listening Task (or on Listening tab) */}
-            {isStudentMode && (assignedTaskType === 'listening' || activeTab === 'listening') ? (
-              <StudentListeningKaraokeView
-                assignment={
-                  activeAssignment || {
-                    id: 'active-lesson',
-                    title: lessonFormat === 'conversation' ? 'English Dialogue Practice' : 'English Reading Passage',
-                    rawText: rawText,
-                    selectedTier: selectedTier,
-                    lessonFormat: lessonFormat,
-                    className: 'Class 12',
-                    teacherNotes: 'Luyện nghe bài đọc với English Sub và chuyển màu chữ Karaoke',
-                    createdAt: new Date().toISOString(),
-                    assignedTask: 'listening',
-                  }
-                }
-                sentences={activeTierSentences}
-                rawText={rawText}
-                language={language}
-                voiceSettings={voiceSettings}
-                onUpdateVoiceSettings={(newSettings) => setVoiceSettings(newSettings)}
-                onSwitchToOtherTask={(task) => {
-                  if (task === 'shadowing') setActiveTab('shadowing');
-                  else if (task === 'words') setActiveTab('words');
-                  else if (task === 'quiz') setActiveTab('quiz');
-                  else if (task === 'dictation') setActiveTab('dictation');
-                  else if (task === 'chat') setActiveTab('chatbot');
-                  else setActiveTab('listening');
-                }}
-                onExitStudentMode={() => {
-                  setActiveAssignment(null);
-                  setIsStudentPreview(false);
-                }}
-              />
+            {isLockedStudentTask ? (
+              /* ========================================================================= */
+              /* LOCKED STUDENT TASK: Only allowed to practice the assigned task!         */
+              /* ========================================================================= */
+              <>
+                {assignedTaskType === 'listening' && (
+                  <StudentListeningKaraokeView
+                    assignment={activeAssignment!}
+                    sentences={activeTierSentences}
+                    rawText={rawText}
+                    language={language}
+                    voiceSettings={voiceSettings}
+                    onUpdateVoiceSettings={(newSettings) => setVoiceSettings(newSettings)}
+                    onSwitchToOtherTask={() => {}}
+                    onExitStudentMode={() => {}}
+                  />
+                )}
+
+                {assignedTaskType === 'shadowing' && (
+                  <div className="space-y-6 animate-fadeIn">
+                    <StudentLessonHeader
+                      assignment={activeAssignment!}
+                      rawText={rawText}
+                      selectedTier={selectedTier}
+                      onSelectTier={(newTier) => {
+                        setSelectedTier(newTier);
+                        triggerActivityUpdate({ lastPracticedTier: newTier });
+                      }}
+                      totalSentences={parsedSentences.length}
+                      tierSentencesCount={activeTierSentences.length}
+                      totalWords={totalWords}
+                      practiceStats={livePracticeStats}
+                      onOpenSubmitModal={() => setIsSubmitHomeworkModalOpen(true)}
+                      assignedTaskType="shadowing"
+                      language={language}
+                    />
+
+                    {renderLockedTaskBanner(
+                      'Shadowing Studio (Pronunciation & Rhythm)',
+                      'Luyện phát âm & Shadowing',
+                      '🎙️'
+                    )}
+
+                    <VoiceToolbar
+                      settings={voiceSettings}
+                      onUpdateSettings={(newSettings) => setVoiceSettings(newSettings)}
+                    />
+
+                    <ShadowingStudio
+                      sentences={activeTierSentences}
+                      voiceSettings={voiceSettings}
+                      soundEnabled={soundEnabled}
+                      shadowingResults={shadowingResults}
+                      onSaveResult={handleSaveShadowingResult}
+                    />
+                  </div>
+                )}
+
+                {assignedTaskType === 'words' && (
+                  <div className="space-y-6 animate-fadeIn">
+                    <StudentLessonHeader
+                      assignment={activeAssignment!}
+                      rawText={rawText}
+                      selectedTier={selectedTier}
+                      onSelectTier={(newTier) => {
+                        setSelectedTier(newTier);
+                        triggerActivityUpdate({ lastPracticedTier: newTier });
+                      }}
+                      totalSentences={parsedSentences.length}
+                      tierSentencesCount={activeTierSentences.length}
+                      totalWords={totalWords}
+                      practiceStats={livePracticeStats}
+                      onOpenSubmitModal={() => setIsSubmitHomeworkModalOpen(true)}
+                      assignedTaskType="words"
+                      language={language}
+                    />
+
+                    {renderLockedTaskBanner(
+                      'Task 1: Word Detective (Target Vocabulary)',
+                      'Nhiệm vụ 1: Tìm từ vựng (Word Detective)',
+                      '🔍'
+                    )}
+
+                    <TaskWordRecognition
+                      items={wordRecognitionItems}
+                      soundEnabled={soundEnabled}
+                      onRefresh={buildInteractiveModules}
+                      onCompletedChange={handleWordHuntComplete}
+                    />
+                  </div>
+                )}
+
+                {assignedTaskType === 'quiz' && (
+                  <div className="space-y-6 animate-fadeIn">
+                    <StudentLessonHeader
+                      assignment={activeAssignment!}
+                      rawText={rawText}
+                      selectedTier={selectedTier}
+                      onSelectTier={(newTier) => {
+                        setSelectedTier(newTier);
+                        triggerActivityUpdate({ lastPracticedTier: newTier });
+                      }}
+                      totalSentences={parsedSentences.length}
+                      tierSentencesCount={activeTierSentences.length}
+                      totalWords={totalWords}
+                      practiceStats={livePracticeStats}
+                      onOpenSubmitModal={() => setIsSubmitHomeworkModalOpen(true)}
+                      assignedTaskType="quiz"
+                      language={language}
+                    />
+
+                    {renderLockedTaskBanner(
+                      'Task 2: Comprehension Quiz',
+                      'Nhiệm vụ 2: Trắc nghiệm Đọc hiểu',
+                      '📝'
+                    )}
+
+                    <TaskComprehensionQuiz
+                      questions={quizQuestions}
+                      soundEnabled={soundEnabled}
+                      onQuizProgress={handleQuizProgress}
+                    />
+                  </div>
+                )}
+
+                {assignedTaskType === 'dictation' && (
+                  <div className="space-y-6 animate-fadeIn">
+                    <StudentLessonHeader
+                      assignment={activeAssignment!}
+                      rawText={rawText}
+                      selectedTier={selectedTier}
+                      onSelectTier={(newTier) => {
+                        setSelectedTier(newTier);
+                        triggerActivityUpdate({ lastPracticedTier: newTier });
+                      }}
+                      totalSentences={parsedSentences.length}
+                      tierSentencesCount={activeTierSentences.length}
+                      totalWords={totalWords}
+                      practiceStats={livePracticeStats}
+                      onOpenSubmitModal={() => setIsSubmitHomeworkModalOpen(true)}
+                      assignedTaskType="dictation"
+                      language={language}
+                    />
+
+                    {renderLockedTaskBanner(
+                      'Task 3: Smart Dictation',
+                      'Nhiệm vụ 3: Chép chính tả thông minh',
+                      '✍️'
+                    )}
+
+                    <VoiceToolbar
+                      settings={voiceSettings}
+                      onUpdateSettings={(newSettings) => setVoiceSettings(newSettings)}
+                    />
+
+                    <TaskSmartDictation
+                      sentences={activeTierSentences}
+                      tier={selectedTier}
+                      voiceSettings={voiceSettings}
+                      onUpdateVoiceSettings={(newSettings) => setVoiceSettings(newSettings)}
+                      soundEnabled={soundEnabled}
+                      onSentenceEvaluated={handleDictationEvaluated}
+                    />
+                  </div>
+                )}
+
+                {assignedTaskType === 'chat' && (
+                  <div className="space-y-6 animate-fadeIn">
+                    <StudentLessonHeader
+                      assignment={activeAssignment!}
+                      rawText={rawText}
+                      selectedTier={selectedTier}
+                      onSelectTier={(newTier) => {
+                        setSelectedTier(newTier);
+                        triggerActivityUpdate({ lastPracticedTier: newTier });
+                      }}
+                      totalSentences={parsedSentences.length}
+                      tierSentencesCount={activeTierSentences.length}
+                      totalWords={totalWords}
+                      practiceStats={livePracticeStats}
+                      onOpenSubmitModal={() => setIsSubmitHomeworkModalOpen(true)}
+                      assignedTaskType="chat"
+                      language={language}
+                    />
+
+                    {renderLockedTaskBanner(
+                      'Task 4: Ms Mèo Chat (Interactive Reflex)',
+                      'Nhiệm vụ 4: Ms Mèo Chat phản xạ',
+                      '🐱'
+                    )}
+
+                    <TaskMsMeoChatbot
+                      fullText={rawText}
+                      sentences={parsedSentences}
+                      voiceSettings={voiceSettings}
+                      soundEnabled={soundEnabled}
+                      onChatActivity={handleChatActivity}
+                      isStudentMode={isStudentMode}
+                    />
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 {/* If Student Mode in other task or full practice */}

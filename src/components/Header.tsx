@@ -14,6 +14,7 @@ import {
   Globe,
 } from 'lucide-react';
 import mascotImg from '../assets/images/ms_meo_mascot_1790341757214.jpg';
+import { Assignment, AssignedTaskType } from '../types';
 
 interface HeaderProps {
   soundEnabled: boolean;
@@ -37,6 +38,8 @@ interface HeaderProps {
   onOpenSubmitModal?: () => void;
   isStudentPreview?: boolean;
   onToggleStudentPreview?: () => void;
+  activeAssignment?: Assignment | null;
+  assignedTaskType?: AssignedTaskType;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -61,18 +64,42 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSubmitModal,
   isStudentPreview = false,
   onToggleStudentPreview,
+  activeAssignment = null,
+  assignedTaskType,
 }) => {
   const isEn = language === 'en' || isStudentMode;
+  const isLockedTask = !!activeAssignment && assignedTaskType !== 'all';
+
+  const getTaskLabel = (task?: AssignedTaskType) => {
+    switch (task) {
+      case 'listening':
+        return isEn ? '🎧 Listening & Karaoke' : '🎧 Luyện nghe Karaoke';
+      case 'shadowing':
+        return isEn ? '🎙️ Shadowing Studio' : '🎙️ Luyện phát âm & Shadowing';
+      case 'words':
+        return isEn ? '🔍 Task 1: Word Detective' : '🔍 Nhiệm vụ 1: Tìm từ vựng';
+      case 'quiz':
+        return isEn ? '📝 Task 2: Quiz' : '📝 Nhiệm vụ 2: Trắc nghiệm';
+      case 'dictation':
+        return isEn ? '✍️ Task 3: Smart Dictation' : '✍️ Nhiệm vụ 3: Chép chính tả';
+      case 'chat':
+        return isEn ? '🐱 Task 4: Ms Mèo Chat' : '🐱 Nhiệm vụ 4: Ms Mèo Chat';
+      default:
+        return isEn ? '🌟 Full Lesson' : '🌟 Trọn bộ bài học';
+    }
+  };
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-pink-100 shadow-xs">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-3">
-        {/* Zone 1: Logo & Brand Lockup (Clicking returns Home) */}
+        {/* Zone 1: Logo & Brand Lockup (Clicking returns Home only if not locked in assignment) */}
         <button
           type="button"
-          onClick={onGoHome}
-          className="flex items-center gap-2.5 text-left shrink-0 group focus:outline-none"
-          title={isEn ? 'Home' : 'Trang chủ'}
+          onClick={isLockedTask ? undefined : onGoHome}
+          className={`flex items-center gap-2.5 text-left shrink-0 group focus:outline-none ${
+            isLockedTask ? 'cursor-default' : 'cursor-pointer'
+          }`}
+          title={isLockedTask ? (isEn ? 'Assigned Task' : 'Nhiệm vụ được giao') : (isEn ? 'Home' : 'Trang chủ')}
         >
           <div className="relative">
             <img
@@ -81,168 +108,198 @@ export const Header: React.FC<HeaderProps> = ({
               referrerPolicy="no-referrer"
               className="w-10 h-10 rounded-full border-2 border-pink-300 object-cover shadow-sm transition-transform group-hover:scale-105"
             />
-            <span className="absolute -bottom-1 -right-1 text-xs">🎓</span>
+            <span className="absolute -bottom-1 -right-1 text-xs">{isLockedTask ? '🔒' : '🎓'}</span>
           </div>
           <div>
             <span className="font-heading text-base sm:text-lg font-bold tracking-tight text-slate-800 flex items-center gap-1.5">
               <span>Ms Mèo English</span>
-              <span className="text-pink-600 text-[10px] font-bold px-2 py-0.2 bg-pink-50 rounded-full border border-pink-200 uppercase tracking-wider">
-                {isStudentMode ? 'Student' : 'Lab'}
+              <span className={`text-[10px] font-bold px-2 py-0.2 rounded-full border uppercase tracking-wider ${
+                isLockedTask
+                  ? 'bg-amber-50 text-amber-800 border-amber-300'
+                  : 'bg-pink-50 text-pink-600 border-pink-200'
+              }`}>
+                {isLockedTask ? (isEn ? 'Assigned' : 'Bài tập') : (isStudentMode ? 'Student' : 'Lab')}
               </span>
             </span>
             <p className="text-[11px] text-slate-400 hidden lg:block -mt-0.5">
-              {isEn
-                ? 'Interactive English Shadowing & Comprehension Lab'
-                : 'Luyện nói phát âm, nhịp điệu & đọc hiểu THPT'}
+              {isLockedTask
+                ? (isEn ? 'Dedicated practice mode for assigned task' : 'Chế độ luyện tập chuyên biệt theo link giao bài')
+                : (isEn ? 'Interactive English Shadowing & Comprehension Lab' : 'Luyện nói phát âm, nhịp điệu & đọc hiểu THPT')}
             </p>
           </div>
         </button>
 
         {/* Zone 2: Navigation Buttons (Starting with HOME, followed by standalone buttons) */}
         <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto py-1">
-          {/* 1. BUTTON HOME (TRANG CHỦ) - Always First! */}
-          <button
-            type="button"
-            onClick={onGoHome}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs hover:scale-102 shrink-0 ${
-              currentView === 'home'
-                ? 'bg-pink-100 text-pink-700 border border-pink-300 font-extrabold ring-1 ring-pink-300'
-                : 'text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200'
-            }`}
-            title={isEn ? 'Go to Home' : 'Về Trang chủ'}
-          >
-            <Home className="w-3.5 h-3.5 text-pink-600" />
-            <span>{isEn ? 'Home' : 'Trang chủ'}</span>
-          </button>
+          {/* If Student is in LOCKED task mode, ONLY show the assigned task badge and submit button! */}
+          {isLockedTask ? (
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-50 via-pink-50 to-rose-50 border border-amber-300/80 text-slate-900 text-xs font-black shadow-2xs shrink-0">
+                <span className="text-amber-600">🔒</span>
+                <span className="text-amber-950">{getTaskLabel(assignedTaskType)}</span>
+                <span className="hidden sm:inline text-[10px] text-amber-800 font-extrabold bg-amber-200/60 px-2 py-0.5 rounded-md border border-amber-300">
+                  {isEn ? 'Only Task Allowed' : 'Chỉ làm bài này'}
+                </span>
+              </div>
 
-          {isStudentMode ? (
-            /* Student Mode Navigation Buttons (100% in English) */
-            <>
-              {/* Practice Button */}
-              <button
-                type="button"
-                onClick={onOpenPractice}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs hover:scale-102 shrink-0 ${
-                  currentView === 'practice'
-                    ? 'bg-indigo-600 text-white font-extrabold ring-2 ring-indigo-200 shadow-xs'
-                    : 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200'
-                }`}
-                title="Practice Lab"
-              >
-                <span>🚀</span>
-                <span>Practice</span>
-              </button>
-
-              {/* Direct Tab Switches when in Practice */}
-              <button
-                type="button"
-                onClick={() => {
-                  onOpenPractice();
-                  onSelectTab('listening');
-                }}
-                className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                  currentView === 'practice' && activeTab === 'listening'
-                    ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <span>🎧</span>
-                <span>Listening</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  onOpenPractice();
-                  onSelectTab('shadowing');
-                }}
-                className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                  currentView === 'practice' && activeTab === 'shadowing'
-                    ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <span>🎙️</span>
-                <span>Shadowing</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  onOpenPractice();
-                  onSelectTab('words');
-                }}
-                className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                  currentView === 'practice' && activeTab === 'words'
-                    ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <span>🔍</span>
-                <span>Task 1</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  onOpenPractice();
-                  onSelectTab('quiz');
-                }}
-                className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                  currentView === 'practice' && activeTab === 'quiz'
-                    ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <span>📝</span>
-                <span>Task 2</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  onOpenPractice();
-                  onSelectTab('dictation');
-                }}
-                className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                  currentView === 'practice' && activeTab === 'dictation'
-                    ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <span>🎧</span>
-                <span>Task 3</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  onOpenPractice();
-                  onSelectTab('chatbot');
-                }}
-                className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                  currentView === 'practice' && activeTab === 'chatbot'
-                    ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <span>🐱</span>
-                <span>Ms Mèo Chat</span>
-              </button>
-
-              {/* Submit Homework Button (English) */}
+              {/* Submit Homework Button */}
               {onOpenSubmitModal && (
                 <button
                   type="button"
                   onClick={onOpenSubmitModal}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-extrabold text-slate-900 bg-amber-400 hover:bg-amber-300 rounded-xl shadow-xs transition-all hover:scale-102 ring-2 ring-amber-200 shrink-0"
+                  title={isEn ? 'Submit Homework' : 'Nộp bài tập'}
                 >
                   <Send className="w-3.5 h-3.5 text-slate-900" />
-                  <span>📤 Submit Homework</span>
+                  <span>{isEn ? 'Submit' : 'Nộp bài'}</span>
                 </button>
               )}
-            </>
+            </div>
           ) : (
+            <>
+              {/* 1. BUTTON HOME (TRANG CHỦ) - Always First! */}
+              <button
+                type="button"
+                onClick={onGoHome}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs hover:scale-102 shrink-0 ${
+                  currentView === 'home'
+                    ? 'bg-pink-100 text-pink-700 border border-pink-300 font-extrabold ring-1 ring-pink-300'
+                    : 'text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200'
+                }`}
+                title={isEn ? 'Go to Home' : 'Về Trang chủ'}
+              >
+                <Home className="w-3.5 h-3.5 text-pink-600" />
+                <span>{isEn ? 'Home' : 'Trang chủ'}</span>
+              </button>
+
+              {isStudentMode ? (
+                /* Student Mode Navigation Buttons (100% in English) */
+                <>
+                  {/* Practice Button */}
+                  <button
+                    type="button"
+                    onClick={onOpenPractice}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs hover:scale-102 shrink-0 ${
+                      currentView === 'practice'
+                        ? 'bg-indigo-600 text-white font-extrabold ring-2 ring-indigo-200 shadow-xs'
+                        : 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200'
+                    }`}
+                    title="Practice Lab"
+                  >
+                    <span>🚀</span>
+                    <span>Practice</span>
+                  </button>
+
+                  {/* Direct Tab Switches when in Practice */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenPractice();
+                      onSelectTab('listening');
+                    }}
+                    className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                      currentView === 'practice' && activeTab === 'listening'
+                        ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>🎧</span>
+                    <span>Listening</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenPractice();
+                      onSelectTab('shadowing');
+                    }}
+                    className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                      currentView === 'practice' && activeTab === 'shadowing'
+                        ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>🎙️</span>
+                    <span>Shadowing</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenPractice();
+                      onSelectTab('words');
+                    }}
+                    className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                      currentView === 'practice' && activeTab === 'words'
+                        ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>🔍</span>
+                    <span>Task 1</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenPractice();
+                      onSelectTab('quiz');
+                    }}
+                    className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                      currentView === 'practice' && activeTab === 'quiz'
+                        ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>📝</span>
+                    <span>Task 2</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenPractice();
+                      onSelectTab('dictation');
+                    }}
+                    className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                      currentView === 'practice' && activeTab === 'dictation'
+                        ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>🎧</span>
+                    <span>Task 3</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenPractice();
+                      onSelectTab('chatbot');
+                    }}
+                    className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                      currentView === 'practice' && activeTab === 'chatbot'
+                        ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>🐱</span>
+                    <span>Ms Mèo Chat</span>
+                  </button>
+
+                  {/* Submit Homework Button (English) */}
+                  {onOpenSubmitModal && (
+                    <button
+                      type="button"
+                      onClick={onOpenSubmitModal}
+                      className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-extrabold text-slate-900 bg-amber-400 hover:bg-amber-300 rounded-xl shadow-xs transition-all hover:scale-102 ring-2 ring-amber-200 shrink-0"
+                    >
+                      <Send className="w-3.5 h-3.5 text-slate-900" />
+                      <span>📤 Submit Homework</span>
+                    </button>
+                  )}
+                </>
+              ) : (
             /* Teacher / Lab Mode Standalone Buttons */
             <>
               {/* 2. DEDICATED SOẠN BÀI / CREATOR BUTTON */}
@@ -422,6 +479,8 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </>
           )}
+        </>
+      )}
 
           {/* 7. HUY HIỆU (BADGES) BUTTON */}
           {onOpenBadges && (

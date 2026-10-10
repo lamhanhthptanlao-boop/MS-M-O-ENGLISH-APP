@@ -12,7 +12,7 @@ import {
   CheckCircle2,
   Trophy,
 } from 'lucide-react';
-import { Assignment, DifficultyTier } from '../types';
+import { Assignment, DifficultyTier, AssignedTaskType } from '../types';
 import { playSoftTone } from '../utils/audio';
 
 interface StudentLessonHeaderProps {
@@ -33,6 +33,8 @@ interface StudentLessonHeaderProps {
     dictationScore: number;
   };
   onOpenSubmitModal: () => void;
+  assignedTaskType?: AssignedTaskType;
+  language?: 'en' | 'vi';
 }
 
 export const StudentLessonHeader: React.FC<StudentLessonHeaderProps> = ({
@@ -45,10 +47,33 @@ export const StudentLessonHeader: React.FC<StudentLessonHeaderProps> = ({
   totalWords,
   practiceStats,
   onOpenSubmitModal,
+  assignedTaskType,
+  language = 'en',
 }) => {
   const [isTextExpanded, setIsTextExpanded] = useState<boolean>(true);
-
+  const isEn = language === 'en';
   const isConversation = assignment.lessonFormat === 'conversation';
+
+  const getTaskBadge = (task?: AssignedTaskType) => {
+    switch (task) {
+      case 'listening':
+        return isEn ? '🎧 Listening & Karaoke' : '🎧 Luyện nghe Karaoke';
+      case 'shadowing':
+        return isEn ? '🎙️ Shadowing Studio' : '🎙️ Luyện phát âm & Shadowing';
+      case 'words':
+        return isEn ? '🔍 Task 1: Word Detective' : '🔍 Nhiệm vụ 1: Tìm từ vựng';
+      case 'quiz':
+        return isEn ? '📝 Task 2: Comprehension Quiz' : '📝 Nhiệm vụ 2: Trắc nghiệm Đọc hiểu';
+      case 'dictation':
+        return isEn ? '✍️ Task 3: Smart Dictation' : '✍️ Nhiệm vụ 3: Chép chính tả';
+      case 'chat':
+        return isEn ? '🐱 Task 4: Ms Mèo Chat' : '🐱 Nhiệm vụ 4: Ms Mèo Chat';
+      default:
+        return null;
+    }
+  };
+
+  const taskBadge = getTaskBadge(assignedTaskType);
 
   return (
     <section className="bg-white rounded-3xl p-5 sm:p-7 border border-teal-200 shadow-sm relative overflow-hidden space-y-5">
@@ -63,6 +88,13 @@ export const StudentLessonHeader: React.FC<StudentLessonHeaderProps> = ({
               <Sparkles className="w-3 h-3 text-teal-600" />
               <span>Assigned Homework</span>
             </span>
+
+            {taskBadge && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-rose-500 text-white shadow-2xs border border-rose-400/50">
+                <span>🔒</span>
+                <span>{taskBadge}</span>
+              </span>
+            )}
 
             <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold uppercase tracking-wider ${
               isConversation
