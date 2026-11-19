@@ -10,6 +10,7 @@ interface SaveLessonDialogProps {
   selectedTier: DifficultyTier;
   sentenceCount: number;
   wordCount: number;
+  language?: 'en' | 'vi';
   onSave: (title: string) => Promise<void>;
 }
 
@@ -20,8 +21,10 @@ export const SaveLessonDialog: React.FC<SaveLessonDialogProps> = ({
   selectedTier,
   sentenceCount,
   wordCount,
+  language = 'vi',
   onSave,
 }) => {
+  const isEn = language === 'en';
   const [title, setTitle] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -34,10 +37,12 @@ export const SaveLessonDialog: React.FC<SaveLessonDialogProps> = ({
       const cleanSnippet = firstSentence.slice(0, 40).trim();
       const defaultTitle = cleanSnippet
         ? cleanSnippet + (cleanSnippet.length >= 40 ? '...' : '')
+        : isEn
+        ? `Practice Lesson ${new Date().toLocaleDateString('en-US')}`
         : `Bài luyện tập ${new Date().toLocaleDateString('vi-VN')}`;
       setTitle(defaultTitle);
     }
-  }, [isOpen, rawText]);
+  }, [isOpen, rawText, isEn]);
 
   if (!isOpen) return null;
 
@@ -62,47 +67,51 @@ export const SaveLessonDialog: React.FC<SaveLessonDialogProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
       <div
         className="bg-white rounded-3xl w-full max-w-md shadow-2xl border-2 border-pink-200 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="p-5 bg-gradient-to-r from-pink-500 via-rose-500 to-pink-600 text-white flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-white/20">
+        <div className="p-4 sm:p-5 bg-gradient-to-r from-pink-500 via-rose-500 to-pink-600 text-white flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-xl bg-white/20 shrink-0">
               <BookmarkPlus className="w-5 h-5 text-white" />
             </div>
-            <div>
-              <h3 className="font-heading font-bold text-base sm:text-lg">
-                Lưu bài học đã tạo
+            <div className="min-w-0">
+              <h3 className="font-heading font-bold text-base sm:text-lg truncate">
+                {isEn ? 'Save Practice Lesson' : 'Lưu bài học đã tạo'}
               </h3>
               <p className="text-xs text-pink-100">
-                Lưu vào kho bài tập cá nhân trên trình duyệt của bạn
+                {isEn
+                  ? 'Saved locally in this browser only'
+                  : 'Lưu vào kho bài tập trên trình duyệt này'}
               </p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 text-white/80 hover:text-white hover:bg-white/20 rounded-full transition-colors"
+            className="p-1.5 text-white/80 hover:text-white hover:bg-white/20 rounded-full transition-colors shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Content Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-4">
           {savedSuccess ? (
             <div className="py-6 text-center space-y-3">
               <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto text-2xl">
                 <Check className="w-8 h-8" />
               </div>
               <h4 className="font-heading font-extrabold text-slate-800 text-lg">
-                Đã lưu bài học thành công!
+                {isEn ? 'Lesson saved!' : 'Đã lưu bài học thành công!'}
               </h4>
               <p className="text-xs text-slate-500">
-                Bài học đã được thêm vào kho lưu trữ của bạn.
+                {isEn
+                  ? 'Your lesson is ready in your browser library.'
+                  : 'Bài học đã được thêm vào kho lưu trữ trên trình duyệt.'}
               </p>
             </div>
           ) : (
@@ -110,13 +119,13 @@ export const SaveLessonDialog: React.FC<SaveLessonDialogProps> = ({
               {/* Title input */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 block">
-                  Tiêu đề bài học:
+                  {isEn ? 'Lesson Title:' : 'Tiêu đề bài học:'}
                 </label>
                 <input
                   type="text"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Nhập tên dễ nhớ cho bài học..."
+                  placeholder={isEn ? 'Enter a memorable lesson title...' : 'Nhập tên dễ nhớ cho bài học...'}
                   className="w-full text-sm font-medium bg-slate-50 border-2 border-pink-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-pink-400 focus:bg-white transition-all text-slate-800"
                   autoFocus
                   required
@@ -126,7 +135,7 @@ export const SaveLessonDialog: React.FC<SaveLessonDialogProps> = ({
               {/* Lesson Summary Card */}
               <div className="p-3.5 bg-pink-50/60 rounded-2xl border border-pink-200/80 space-y-2 text-xs">
                 <div className="flex items-center justify-between text-slate-600">
-                  <span className="font-semibold">Mức độ khó:</span>
+                  <span className="font-semibold">{isEn ? 'Difficulty Tier:' : 'Mức độ gợi ý:'}</span>
                   <span
                     className={`font-bold px-2 py-0.5 rounded-md uppercase text-[10px] ${
                       selectedTier === 'easy'
@@ -140,13 +149,13 @@ export const SaveLessonDialog: React.FC<SaveLessonDialogProps> = ({
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-slate-600">
-                  <span className="font-semibold">Độ dài:</span>
+                  <span className="font-semibold">{isEn ? 'Length:' : 'Độ dài:'}</span>
                   <span className="font-medium text-slate-800">
-                    {sentenceCount} câu • {wordCount} từ
+                    {sentenceCount} {isEn ? 'sent.' : 'câu'} • {wordCount} {isEn ? 'words' : 'từ'}
                   </span>
                 </div>
                 <div className="pt-2 border-t border-pink-200/60 text-slate-500 line-clamp-2 italic text-[11px]">
-                  "{rawText.slice(0, 100)}..."
+                  &ldquo;{rawText.slice(0, 100)}...&rdquo;
                 </div>
               </div>
 
@@ -158,7 +167,7 @@ export const SaveLessonDialog: React.FC<SaveLessonDialogProps> = ({
                   disabled={isSaving}
                   className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
                 >
-                  Hủy
+                  {isEn ? 'Cancel' : 'Hủy'}
                 </button>
 
                 <button
@@ -169,12 +178,12 @@ export const SaveLessonDialog: React.FC<SaveLessonDialogProps> = ({
                   {isSaving ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Đang lưu...</span>
+                      <span>{isEn ? 'Saving...' : 'Đang lưu...'}</span>
                     </>
                   ) : (
                     <>
                       <BookmarkPlus className="w-4 h-4" />
-                      <span>Lưu bài học ngay</span>
+                      <span>{isEn ? 'Save Lesson' : 'Lưu bài học ngay'}</span>
                     </>
                   )}
                 </button>

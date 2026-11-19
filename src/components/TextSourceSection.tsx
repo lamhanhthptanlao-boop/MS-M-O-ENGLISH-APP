@@ -12,10 +12,20 @@ import {
   Share2,
   MessageSquare,
   Users,
+  SlidersHorizontal,
+  Hash,
 } from 'lucide-react';
 import { DifficultyTier, LessonFormat } from '../types';
-import { SAMPLE_TEXTS, SAMPLE_CONVERSATIONS } from '../utils/textParser';
+import {
+  analyzeAllSentences,
+  filterSentencesWithPreview,
+  SAMPLE_TEXTS,
+  SAMPLE_CONVERSATIONS,
+  SentenceSelectionMode,
+  splitIntoSentences,
+} from '../utils/textParser';
 import { playSoftTone } from '../utils/audio';
+import { SentenceCutPreviewTable } from './SentenceCutPreviewTable';
 
 interface TextSourceSectionProps {
   rawText: string;
@@ -32,6 +42,14 @@ interface TextSourceSectionProps {
   totalSentences: number;
   totalWords: number;
   onOpenAssignModal?: () => void;
+  sentenceCountMode?: SentenceSelectionMode;
+  onChangeSentenceCountMode?: (mode: SentenceSelectionMode) => void;
+  customRangeFrom?: number;
+  onChangeCustomRangeFrom?: (from: number) => void;
+  customRangeTo?: number;
+  onChangeCustomRangeTo?: (to: number) => void;
+  enableTierCut?: boolean;
+  onToggleTierCut?: (enabled: boolean) => void;
 }
 
 export const TextSourceSection: React.FC<TextSourceSectionProps> = ({
@@ -49,10 +67,75 @@ export const TextSourceSection: React.FC<TextSourceSectionProps> = ({
   totalSentences,
   totalWords,
   onOpenAssignModal,
+  sentenceCountMode: controlledMode,
+  onChangeSentenceCountMode,
+  customRangeFrom: controlledFrom,
+  onChangeCustomRangeFrom,
+  customRangeTo: controlledTo,
+  onChangeCustomRangeTo,
+  enableTierCut: controlledTierCut,
+  onToggleTierCut,
 }) => {
   const isEn = language === 'en';
   const [selectedPresetId, setSelectedPresetId] = useState<string>('habits');
   const [isSectionOpen, setIsSectionOpen] = useState<boolean>(true);
+
+  // Local fallback states if not controlled by parent
+  const [localMode, setLocalMode] = useState<SentenceSelectionMode>('all');
+  const [localFrom, setLocalFrom] = useState<number>(1);
+  const [localTo, setLocalTo] = useState<number>(() => Math.min(5, totalSentences || 1));
+  const [localTierCut, setLocalTierCut] = useState<boolean>(false);
+
+  const activeMode = controlledMode !== undefined ? controlledMode : localMode;
+  const activeFrom = controlledFrom !== undefined ? controlledFrom : localFrom;
+  const activeTo = controlledTo !== undefined ? controlledTo : localTo;
+  const activeTierCut = controlledTierCut !== undefined ? controlledTierCut : localTierCut;
+
+  const handleModeChange = (mode: SentenceSelectionMode) => {
+    if (onChangeSentenceCountMode) {
+      onChangeSentenceCountMode(mode);
+    } else {
+      setLocalMode(mode);
+    }
+  };
+
+  const handleTierCutToggle = (enabled: boolean) => {
+    if (onToggleTierCut) {
+      onToggleTierCut(enabled);
+    } else {
+      setLocalTierCut(enabled);
+    }
+  };
+
+  const handleFromChange = (fromVal: number) => {
+    const clamped = Math.max(1, Math.min(fromVal, totalSentences || 1));
+    if (onChangeCustomRangeFrom) {
+      onChangeCustomRangeFrom(clamped);
+    } else {
+      setLocalFrom(clamped);
+    }
+  };
+
+  const handleToChange = (toVal: number) => {
+    const clamped = Math.max(activeFrom, Math.min(toVal, totalSentences || 1));
+    if (onChangeCustomRangeTo) {
+      onChangeCustomRangeTo(clamped);
+    } else {
+      setLocalTo(clamped);
+    }
+  };
+
+  const sentenceCutPreview = React.useMemo(() => {
+    const analyzed = analyzeAllSentences(splitIntoSentences(rawText));
+    return filterSentencesWithPreview(analyzed, {
+      mode: activeMode,
+      from: activeFrom,
+      to: activeTo,
+      cutByTier: activeTierCut ? selectedTier : null,
+    });
+  }, [rawText, activeMode, activeFrom, activeTo, activeTierCut, selectedTier]);
+
+  const effectiveSentenceCount = sentenceCutPreview.keptSentences.length;
 
   const currentPresets = lessonFormat === 'conversation' ? SAMPLE_CONVERSATIONS : SAMPLE_TEXTS;
 
@@ -108,7 +191,7 @@ export const TextSourceSection: React.FC<TextSourceSectionProps> = ({
           </div>
 
           {/* Format Selector: Text vs Conversation and Collapse Toggle */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1.5 p-1 bg-slate-100/90 rounded-2xl border border-slate-200 shrink-0">
               <button
                 type="button"
@@ -241,12 +324,18 @@ export const TextSourceSection: React.FC<TextSourceSectionProps> = ({
             rows={lessonFormat === 'conversation' ? 7 : 5}
             placeholder={
               lessonFormat === 'conversation'
-                ? `Nhập đoạn hội thoại tiếng Anh với tên người nói ở đầu mỗi dòng, ví dụ:
+                ? isEn
+                  ? `Paste an English dialogue with speaker names at the start of each line, e.g.:
+Alex: Hi Sarah! What university major are you choosing?
+Sarah: I am preparing for Computer Science because I love technology.`
+                  : `Nhập đoạn hội thoại tiếng Anh với tên người nói ở đầu mỗi dòng, ví dụ:
 Alex: Hi Sarah! What university major are you choosing?
 Sarah: I am preparing for Computer Science because I love technology.
 Alex: That sounds exciting! How is your English preparation going?
 Sarah: I practice shadowing every day with Ms Mèo!`
-                : "Dán đoạn văn tiếng Anh, bài báo hoặc đoạn trích đọc hiểu vào đây..."
+                : isEn
+                ? 'Paste your English reading passage, article, or study excerpt here...'
+                : 'Dán đoạn văn tiếng Anh, bài báo hoặc đoạn trích đọc hiểu vào đây...'
             }
             className={`w-full text-sm sm:text-base text-slate-800 rounded-2xl p-4 focus:outline-none transition-all placeholder:text-slate-400 leading-relaxed resize-y font-normal ${
               lessonFormat === 'conversation'
@@ -256,38 +345,47 @@ Sarah: I practice shadowing every day with Ms Mèo!`
           />
 
           {/* Live text counters & format badge */}
-          <div className="flex items-center justify-between text-xs text-slate-500 mt-2 px-1">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 mt-2 px-1">
+            <div className="flex flex-wrap items-center gap-2">
               <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
                 lessonFormat === 'conversation'
                   ? 'bg-teal-100 text-teal-800 border border-teal-200'
                   : 'bg-pink-100 text-pink-800 border border-pink-200'
               }`}>
-                {lessonFormat === 'conversation' ? '💬 Hội thoại (Dialogue)' : '📄 Đoạn văn (Reading Text)'}
+                {lessonFormat === 'conversation'
+                  ? isEn ? '💬 Dialogue' : '💬 Hội thoại (Dialogue)'
+                  : isEn ? '📄 Reading Text' : '📄 Đoạn văn (Reading Text)'}
               </span>
               <span>
-                <strong>{totalWords}</strong> words
+                <strong>{totalWords}</strong> {isEn ? 'words' : 'từ'}
               </span>
               <span>•</span>
               <span>
-                <strong>{totalSentences}</strong> {lessonFormat === 'conversation' ? 'lượt thoại' : 'câu'}
+                <strong>{totalSentences}</strong>{' '}
+                {lessonFormat === 'conversation'
+                  ? isEn ? 'turns' : 'lượt thoại'
+                  : isEn ? 'sentences' : 'câu'}
               </span>
             </div>
             <span>
-              ~{Math.max(1, Math.ceil(totalWords / 130))} min practice
+              ~{Math.max(1, Math.ceil(totalWords / 130))} {isEn ? 'min practice' : 'phút luyện'}
             </span>
           </div>
         </div>
 
-        {/* Difficulty Tier Selector (Section 3 Requirement) */}
-        <div className="mt-5 pt-4 border-t border-pink-100">
+        {/* Difficulty Tier Selector (Controls Hint Level ONLY - never cuts sentences automatically) */}
+        <div className="mt-5 pt-4 border-t border-pink-100 space-y-3">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div>
               <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1">
-                Select Difficulty Tier & Dictation Hints:
+                {isEn
+                  ? 'Select Difficulty Tier (Hint Level Only):'
+                  : 'Chọn Cấp độ Gợi ý (Không tự cắt câu):'}
               </span>
               <p className="text-xs text-slate-500">
-                Filters sentences by word length & determines fill-in-the-blank hint support
+                {isEn
+                  ? 'Tier adjusts fill-in-the-blank & pronunciation hint support while keeping 100% of your sentences.'
+                  : 'Tier chỉ chỉnh mức gợi ý chữ cái khi chép chính tả; toàn bộ số câu được giữ nguyên trừ khi bạn chọn cắt câu bên dưới.'}
               </p>
             </div>
 
@@ -308,10 +406,10 @@ Sarah: I practice shadowing every day with Ms Mèo!`
               >
                 <div className="flex items-center gap-1 font-bold text-xs">
                   <span>🟢</span>
-                  <span>EASY MODE</span>
+                  <span>EASY</span>
                 </div>
                 <span className="text-[10px] text-slate-500 mt-0.5">
-                  1-6 words (100% Hint)
+                  {isEn ? '100% Hint (First + Last)' : 'Gợi ý chữ đầu & cuối'}
                 </span>
               </button>
 
@@ -333,7 +431,7 @@ Sarah: I practice shadowing every day with Ms Mèo!`
                   <span>MEDIUM</span>
                 </div>
                 <span className="text-[10px] text-slate-500 mt-0.5">
-                  7-14 words (50% Hint)
+                  {isEn ? '50% Hint (First Letter)' : 'Gợi ý chữ cái đầu'}
                 </span>
               </button>
 
@@ -352,26 +450,233 @@ Sarah: I practice shadowing every day with Ms Mèo!`
               >
                 <div className="flex items-center gap-1 font-bold text-xs">
                   <span>🔴</span>
-                  <span>HARD MODE</span>
+                  <span>HARD</span>
                 </div>
                 <span className="text-[10px] text-slate-500 mt-0.5">
-                  15+ words (0% Hint)
+                  {isEn ? '0% Hint (No Letters)' : 'Tự nhớ (0% gợi ý)'}
                 </span>
               </button>
             </div>
           </div>
+
+          {/* Optional Explicit Tier-Length Cut Toggle */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+            <label className="inline-flex items-center gap-2 cursor-pointer select-none font-semibold text-slate-700">
+              <input
+                type="checkbox"
+                checked={activeTierCut}
+                onChange={(e) => handleTierCutToggle(e.target.checked)}
+                className="rounded border-slate-300 text-pink-600 focus:ring-pink-500"
+              />
+              <span>
+                {isEn
+                  ? 'Optionally filter sentences by Tier word-length (shows Keep/Drop preview below)'
+                  : 'Lọc độ dài câu theo Tier (tùy chọn — sẽ hiện bảng xem trước Câu giữ / Câu loại)'}
+              </span>
+            </label>
+            <span className="text-[11px] font-bold text-slate-500">
+              {activeTierCut
+                ? isEn
+                  ? 'Length filter ON'
+                  : 'Đang bật lọc theo độ dài'
+                : isEn
+                ? 'Keeping all sentences intact'
+                : 'Đang giữ nguyên toàn bộ câu'}
+            </span>
+          </div>
         </div>
 
-        {/* Action Row: Save Lesson, Saved Library, and Generate Lesson */}
+        {/* Dedicated Sentence Count Selection ("Mục Chọn Số Câu") */}
+        <div className="mt-5 pt-4 border-t border-pink-100">
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 mb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <Hash className="w-3.5 h-3.5 text-pink-600" />
+                  <span>{isEn ? 'Choose Sentence Count to Practice:' : 'Chọn số câu luyện tập (Sentence Count):'}</span>
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-pink-100 text-pink-800 border border-pink-300">
+                  {isEn ? `${effectiveSentenceCount} sentences` : `Đang chọn ${effectiveSentenceCount} câu`}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5 font-medium">
+                {isEn
+                  ? 'Limit or select specific sentences to generate for this practice session.'
+                  : 'Chỉ định số lượng câu cần tạo cho bài luyện tập (Tất cả, 3 câu đầu, 5 câu đầu, 10 câu hoặc Tự chọn khoảng câu cụ thể).'}
+              </p>
+            </div>
+
+            {/* Live summary badge */}
+            <div className="text-xs font-bold text-slate-700 bg-white px-3 py-1.5 rounded-xl border border-pink-200 shadow-2xs shrink-0 flex items-center gap-1.5">
+              <span className="text-pink-600 font-extrabold">⚡</span>
+              {activeMode === 'all' ? (
+                <span>{isEn ? `Full: ${totalSentences} sentences` : `Toàn bộ: ${totalSentences} câu`}</span>
+              ) : activeMode === 'custom' ? (
+                <span className="text-indigo-700 font-extrabold">
+                  {isEn
+                    ? `Sentences ${activeFrom} → ${activeTo} (${effectiveSentenceCount} sent.)`
+                    : `Từ câu ${activeFrom} → ${activeTo} (${effectiveSentenceCount} câu)`}
+                </span>
+              ) : (
+                <span className="text-pink-700 font-extrabold">
+                  {isEn ? `First ${effectiveSentenceCount} sentences` : `${effectiveSentenceCount} câu đầu tiên`}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Preset Buttons */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* All sentences */}
+            <button
+              type="button"
+              onClick={() => {
+                playSoftTone();
+                handleModeChange('all');
+              }}
+              className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-1.5 border shadow-2xs ${
+                activeMode === 'all'
+                  ? 'bg-gradient-to-r from-pink-600 to-rose-600 text-white border-pink-700 ring-2 ring-pink-200'
+                  : 'bg-white text-slate-700 border-slate-200 hover:border-pink-300 hover:bg-pink-50/50'
+              }`}
+            >
+              <span>🌟</span>
+              <span>{isEn ? `All (${totalSentences} sentences)` : `Tất cả (${totalSentences} câu)`}</span>
+            </button>
+
+            {/* 3 Sentences */}
+            <button
+              type="button"
+              onClick={() => {
+                playSoftTone();
+                handleModeChange('3');
+              }}
+              className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-1.5 border shadow-2xs ${
+                activeMode === '3'
+                  ? 'bg-gradient-to-r from-pink-600 to-rose-600 text-white border-pink-700 ring-2 ring-pink-200'
+                  : 'bg-white text-slate-700 border-slate-200 hover:border-pink-300 hover:bg-pink-50/50'
+              }`}
+            >
+              <span>⚡</span>
+              <span>{isEn ? '3 sentences' : '3 câu đầu'}</span>
+            </button>
+
+            {/* 5 Sentences */}
+            <button
+              type="button"
+              onClick={() => {
+                playSoftTone();
+                handleModeChange('5');
+              }}
+              className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-1.5 border shadow-2xs ${
+                activeMode === '5'
+                  ? 'bg-gradient-to-r from-pink-600 to-rose-600 text-white border-pink-700 ring-2 ring-pink-200'
+                  : 'bg-white text-slate-700 border-slate-200 hover:border-pink-300 hover:bg-pink-50/50'
+              }`}
+            >
+              <span>🎯</span>
+              <span>{isEn ? '5 sentences' : '5 câu đầu'}</span>
+            </button>
+
+            {/* 10 Sentences */}
+            {totalSentences >= 6 && (
+              <button
+                type="button"
+                onClick={() => {
+                  playSoftTone();
+                  handleModeChange('10');
+                }}
+                className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-1.5 border shadow-2xs ${
+                  activeMode === '10'
+                    ? 'bg-gradient-to-r from-pink-600 to-rose-600 text-white border-pink-700 ring-2 ring-pink-200'
+                    : 'bg-white text-slate-700 border-slate-200 hover:border-pink-300 hover:bg-pink-50/50'
+                }`}
+              >
+                <span>📚</span>
+                <span>{isEn ? '10 sentences' : '10 câu đầu'}</span>
+              </button>
+            )}
+
+            {/* Custom Range */}
+            <button
+              type="button"
+              onClick={() => {
+                playSoftTone();
+                handleModeChange('custom');
+              }}
+              className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-1.5 border shadow-2xs ${
+                activeMode === 'custom'
+                  ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white border-indigo-700 ring-2 ring-indigo-200'
+                  : 'bg-white text-slate-700 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50'
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>{isEn ? '⚙️ Custom Range...' : '⚙️ Tự chọn khoảng câu...'}</span>
+            </button>
+          </div>
+
+          {/* Custom Range Detail Box */}
+          {activeMode === 'custom' && (
+            <div className="mt-3 p-3.5 bg-gradient-to-r from-indigo-50/80 to-purple-50/80 rounded-2xl border-2 border-indigo-200 flex flex-wrap items-center gap-3">
+              <span className="text-xs font-black text-indigo-950">
+                {isEn ? 'Specify sentence interval:' : 'Nhập khoảng câu muốn luyện tập:'}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-bold text-slate-700">
+                  {isEn ? 'From sentence:' : 'Từ câu:'}
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={totalSentences}
+                  value={activeFrom}
+                  onChange={(e) => handleFromChange(parseInt(e.target.value) || 1)}
+                  className="w-16 px-2.5 py-1 text-xs font-black text-indigo-900 bg-white border-2 border-indigo-300 rounded-lg text-center focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-bold text-slate-700">
+                  {isEn ? 'To sentence:' : 'Đến câu:'}
+                </label>
+                <input
+                  type="number"
+                  min={activeFrom}
+                  max={totalSentences}
+                  value={activeTo}
+                  onChange={(e) => handleToChange(parseInt(e.target.value) || activeFrom)}
+                  className="w-16 px-2.5 py-1 text-xs font-black text-indigo-900 bg-white border-2 border-indigo-300 rounded-lg text-center focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+              </div>
+
+              <span className="text-[11px] font-bold text-indigo-800 bg-white/70 px-2 py-0.5 rounded-md border border-indigo-200">
+                {isEn
+                  ? `(Max ${totalSentences} sentences in text)`
+                  : `(Tổng có ${totalSentences} câu trong văn bản)`}
+              </span>
+            </div>
+          )}
+          {/* Sentence Keep / Drop Preview Table */}
+          <div className="mt-3">
+            <SentenceCutPreviewTable
+              previewRows={sentenceCutPreview.previewRows}
+              language={language}
+              defaultExpanded={sentenceCutPreview.hasCuts}
+              compact
+            />
+          </div>
+        </div>
+
+        {/* Action Row: Save Lesson, Saved Library, Assign to Students, and Generate Lesson */}
         <div className="mt-5 pt-4 border-t border-pink-100 flex flex-col sm:flex-row items-center justify-between gap-3">
           {/* Saved Lessons Buttons */}
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             {onOpenSaveDialog && (
               <button
                 type="button"
                 onClick={onOpenSaveDialog}
                 className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl font-heading font-bold text-xs sm:text-sm text-pink-700 bg-pink-50 hover:bg-pink-100 border border-pink-200 transition-all flex items-center justify-center gap-2 shadow-2xs hover:shadow-xs"
-                title={isEn ? 'Save current lesson to Google account' : 'Lưu bài học hiện tại vào tài khoản Google'}
+                title={isEn ? 'Save current lesson on this browser' : 'Lưu bài học hiện tại trên trình duyệt này'}
               >
                 <BookmarkPlus className="w-4 h-4 text-pink-600" />
                 <span>{isEn ? '💾 Save Lesson' : '💾 Lưu bài đã tạo'}</span>
@@ -408,14 +713,18 @@ Sarah: I practice shadowing every day with Ms Mèo!`
             )}
           </div>
 
-          {/* Generate Button */}
+          {/* Generate Button with dynamic sentence count */}
           <button
             type="button"
             onClick={onGenerateLesson}
-            className="w-full sm:w-auto px-6 py-3 rounded-2xl font-heading font-bold text-sm text-white bg-gradient-to-r from-pink-500 via-rose-500 to-pink-600 hover:from-pink-600 hover:to-rose-700 shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 group"
+            className="w-full sm:w-auto px-6 py-3 rounded-2xl font-heading font-black text-sm text-white bg-gradient-to-r from-pink-500 via-rose-500 to-pink-600 hover:from-pink-600 hover:to-rose-700 shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 group hover:scale-102"
           >
             <Sparkles className="w-4 h-4 transition-transform group-hover:rotate-12" />
-            <span>{isEn ? '🚀 Generate Practice Lesson' : '🚀 Tạo bài & Vào Luyện tập'}</span>
+            <span>
+              {isEn
+                ? `🚀 Generate Practice (${effectiveSentenceCount} sentences)`
+                : `🚀 Tạo bài & Luyện tập (${effectiveSentenceCount} câu)`}
+            </span>
             <ChevronRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
           </button>
         </div>

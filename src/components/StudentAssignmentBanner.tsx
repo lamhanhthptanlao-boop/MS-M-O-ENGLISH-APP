@@ -1,16 +1,10 @@
 import React from 'react';
 import { BookOpen, Send, Calendar, Users, MessageSquare, CheckCircle2, Sparkles, Lock } from 'lucide-react';
-import { Assignment, AssignedTaskType } from '../types';
+import { Assignment, AssignedTaskType, PracticeStats } from '../types';
 
 interface StudentAssignmentBannerProps {
   assignment: Assignment;
-  practiceStats: {
-    shadowingCount: number;
-    shadowingAvgScore: number;
-    quizScore: number;
-    quizCorrectCount: number;
-    quizTotal: number;
-  };
+  practiceStats: PracticeStats;
   onOpenSubmitModal: () => void;
   onExitAssignmentMode?: () => void;
   assignedTaskType?: AssignedTaskType;
@@ -103,11 +97,15 @@ export const StudentAssignmentBanner: React.FC<StudentAssignmentBannerProps> = (
           {/* Quick Progress Badges */}
           <div className="hidden md:flex items-center gap-2 bg-white/10 px-3 py-1 rounded-xl text-[11px] border border-white/20">
             <span>
-              Speaking: <strong className="text-amber-200">{practiceStats.shadowingCount}</strong>
+              Voice: <strong className="text-amber-200">{practiceStats.voiceScore}%</strong>
             </span>
             <span>•</span>
             <span>
-              Quiz: <strong className="text-amber-200">{practiceStats.quizScore}%</strong>
+              Typing: <strong className="text-sky-200">{practiceStats.typingMatchScore}%</strong>
+            </span>
+            <span>•</span>
+            <span>
+              Dictation: <strong className="text-emerald-200">{practiceStats.dictationScore}%</strong>
             </span>
           </div>
 

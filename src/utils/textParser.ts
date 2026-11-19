@@ -2,10 +2,25 @@ import {
   AnalyzedSentence,
   DifficultyTier,
   QuizQuestion,
+  ShadowingEvaluationSource,
   ShadowingResult,
   WordComparison,
+  WordComparisonErrorType,
   WordRecognitionItem,
 } from '../types';
+
+/**
+ * Deterministic 8-character FNV-1a hash for scoping sentence IDs and lesson score buckets.
+ */
+export function hashTextKey(input: string): string {
+  const normalized = (input || '').trim().replace(/\s+/g, ' ');
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < normalized.length; i++) {
+    hash ^= normalized.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
 
 const COMMON_STOPWORDS = new Set([
   'a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and',
@@ -124,56 +139,177 @@ export function analyzeAllSentences(sentences: string[]): AnalyzedSentence[] {
       tier = 'hard';
     }
 
+    const clean = sentence.replace(/\s+/g, ' ').trim();
     return {
-      id: `sent-${idx + 1}`,
+      id: `sent-${idx + 1}-${hashTextKey(clean)}`,
       originalText: sentence,
-      cleanText: sentence.replace(/\s+/g, ' ').trim(),
+      cleanText: clean,
       words,
       wordCount,
       charCount: sentence.length,
       tier,
       speaker,
-      dialogueText: dialogueText || sentence.replace(/\s+/g, ' ').trim(),
+      dialogueText: dialogueText || clean,
     };
   });
 }
 
-/**
- * Filter sentences based on selected difficulty rules:
- * - Easy: 1 to 6 words, processes first 3 to 4 sentences (or shortest available)
- * - Medium: 7 to 14 words, processes up to 5 to 6 sentences
- * - Hard: 15+ words, processes ALL sentences in the text
- */
-export function filterSentencesForTier(
+export type SentenceSelectionMode = 'all' | '3' | '5' | '10' | 'custom';
+
+export interface SentencePreviewRow {
+  index: number; // 1-based original sentence index
+  sentence: AnalyzedSentence;
+  kept: boolean;
+  reasonVi: string;
+  reasonEn: string;
+}
+
+export interface SentenceCutConfig {
+  mode?: SentenceSelectionMode;
+  from?: number;
+  to?: number;
+  /**
+   * Optional explicit tier-length filter. MUST stay null/undefined by default
+   * because Difficulty Tier only controls hint support (NOT cutting sentences).
+   */
+  cutByTier?: DifficultyTier | null;
+}
+
+export interface SentenceCutPreviewResult {
+  keptSentences: AnalyzedSentence[];
+  droppedSentences: AnalyzedSentence[];
+  previewRows: SentencePreviewRow[];
+  hasCuts: boolean;
+}
+
+function selectSentenceIdsByTierLength(
   analyzedSentences: AnalyzedSentence[],
   tier: DifficultyTier
-): AnalyzedSentence[] {
+): Set<string> {
   if (tier === 'easy') {
     const directMatches = analyzedSentences.filter((s) => s.wordCount <= 6);
-    if (directMatches.length > 0) {
-      return directMatches.slice(0, 4);
-    }
-    // Fallback: pick the 3-4 shortest sentences in the passage
-    const sorted = [...analyzedSentences].sort((a, b) => a.wordCount - b.wordCount);
-    return sorted.slice(0, 4);
+    const chosen =
+      directMatches.length > 0
+        ? directMatches.slice(0, 4)
+        : [...analyzedSentences].sort((a, b) => a.wordCount - b.wordCount).slice(0, 4);
+    return new Set(chosen.map((s) => s.id));
   }
 
   if (tier === 'medium') {
     const directMatches = analyzedSentences.filter((s) => s.wordCount >= 7 && s.wordCount <= 14);
-    if (directMatches.length > 0) {
-      return directMatches.slice(0, 6);
-    }
-    // Fallback: pick mid-length sentences
-    const sorted = [...analyzedSentences].sort((a, b) => Math.abs(a.wordCount - 10) - Math.abs(b.wordCount - 10));
-    return sorted.slice(0, 6);
+    const chosen =
+      directMatches.length > 0
+        ? directMatches.slice(0, 6)
+        : [...analyzedSentences]
+            .sort((a, b) => Math.abs(a.wordCount - 10) - Math.abs(b.wordCount - 10))
+            .slice(0, 6);
+    return new Set(chosen.map((s) => s.id));
   }
 
-  // Hard Mode: 15+ words or ALL sentences
   const directMatches = analyzedSentences.filter((s) => s.wordCount >= 15);
-  if (directMatches.length >= 3) {
-    return directMatches;
+  const chosen = directMatches.length >= 3 ? directMatches : analyzedSentences;
+  return new Set(chosen.map((s) => s.id));
+}
+
+/**
+ * Difficulty Tier ONLY controls dictation hint level (Easy: 100%, Medium: 50%, Hard: 0%).
+ * It MUST NOT auto-cut sentences unless `allowLengthCut` is explicitly true.
+ */
+export function filterSentencesForTier(
+  analyzedSentences: AnalyzedSentence[],
+  tier: DifficultyTier,
+  allowLengthCut = false
+): AnalyzedSentence[] {
+  if (!allowLengthCut) {
+    return analyzedSentences;
   }
-  return analyzedSentences;
+  const keptIds = selectSentenceIdsByTierLength(analyzedSentences, tier);
+  return analyzedSentences.filter((s) => keptIds.has(s.id));
+}
+
+/**
+ * Explicit sentence selection & optional length-cut with full Kept/Dropped preview rows.
+ */
+export function filterSentencesWithPreview(
+  analyzedSentences: AnalyzedSentence[],
+  config: SentenceCutConfig = {}
+): SentenceCutPreviewResult {
+  const mode: SentenceSelectionMode = config.mode ?? 'all';
+  const cutByTier = config.cutByTier ?? null;
+  const total = analyzedSentences.length;
+
+  const tierAllowedIds = cutByTier
+    ? selectSentenceIdsByTierLength(analyzedSentences, cutByTier)
+    : null;
+
+  const afterTier = tierAllowedIds
+    ? analyzedSentences.filter((s) => tierAllowedIds.has(s.id))
+    : analyzedSentences;
+
+  let keptIdSet: Set<string>;
+  if (mode === 'all') {
+    keptIdSet = new Set(afterTier.map((s) => s.id));
+  } else if (mode === '3') {
+    keptIdSet = new Set(afterTier.slice(0, Math.min(3, afterTier.length)).map((s) => s.id));
+  } else if (mode === '5') {
+    keptIdSet = new Set(afterTier.slice(0, Math.min(5, afterTier.length)).map((s) => s.id));
+  } else if (mode === '10') {
+    keptIdSet = new Set(afterTier.slice(0, Math.min(10, afterTier.length)).map((s) => s.id));
+  } else {
+    const baseLen = afterTier.length;
+    const clampedFrom = Math.max(1, Math.min(config.from ?? 1, Math.max(1, baseLen)));
+    const clampedTo = Math.max(clampedFrom, Math.min(config.to ?? baseLen, Math.max(1, baseLen)));
+    keptIdSet = new Set(afterTier.slice(clampedFrom - 1, clampedTo).map((s) => s.id));
+  }
+
+  const previewRows: SentencePreviewRow[] = analyzedSentences.map((sentence, idx) => {
+    const oneBasedIndex = idx + 1;
+    if (tierAllowedIds && !tierAllowedIds.has(sentence.id)) {
+      return {
+        index: oneBasedIndex,
+        sentence,
+        kept: false,
+        reasonVi: `Loại theo bộ lọc độ dài Tier ${cutByTier?.toUpperCase()} (${sentence.wordCount} từ)`,
+        reasonEn: `Dropped by optional ${cutByTier} length filter (${sentence.wordCount} words)`,
+      };
+    }
+
+    if (!keptIdSet.has(sentence.id)) {
+      const rangeTextVi =
+        mode === 'custom'
+          ? `Ngoài khoảng chọn (${config.from ?? 1}–${config.to ?? total})`
+          : `Ngoài giới hạn ${mode} câu đầu`;
+      const rangeTextEn =
+        mode === 'custom'
+          ? `Outside selected range (${config.from ?? 1}–${config.to ?? total})`
+          : `Beyond first ${mode} sentences`;
+      return {
+        index: oneBasedIndex,
+        sentence,
+        kept: false,
+        reasonVi: rangeTextVi,
+        reasonEn: rangeTextEn,
+      };
+    }
+
+    return {
+      index: oneBasedIndex,
+      sentence,
+      kept: true,
+      reasonVi: 'Giữ lại luyện tập',
+      reasonEn: 'Kept for practice',
+    };
+  });
+
+  const keptSentences = previewRows.filter((r) => r.kept).map((r) => r.sentence);
+  const droppedSentences = previewRows.filter((r) => !r.kept).map((r) => r.sentence);
+
+  return {
+    keptSentences,
+    droppedSentences,
+    previewRows,
+    hasCuts: droppedSentences.length > 0,
+  };
 }
 
 /**
@@ -237,129 +373,419 @@ function wordSimilarity(w1: string, w2: string): number {
   return Math.max(0, 1 - dist / maxLen);
 }
 
+const NUMBER_EQUIVALENTS: Record<string, string> = {
+  '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
+  '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine',
+  '10': 'ten', '11': 'eleven', '12': 'twelve', '13': 'thirteen', '14': 'fourteen',
+  '15': 'fifteen', '16': 'sixteen', '17': 'seventeen', '18': 'eighteen', '19': 'nineteen',
+  '20': 'twenty', '30': 'thirty', '40': 'forty', '50': 'fifty',
+  '60': 'sixty', '70': 'seventy', '80': 'eighty', '90': 'ninety', '100': 'hundred',
+};
+
+const SPELLING_EQUIVALENTS: Record<string, string> = {
+  colour: 'color',
+  colours: 'colors',
+  coloured: 'colored',
+  favour: 'favor',
+  favourite: 'favorite',
+  practise: 'practice',
+  practised: 'practiced',
+  practises: 'practices',
+  realise: 'realize',
+  realised: 'realized',
+  realises: 'realizes',
+  organize: 'organise',
+  organized: 'organised',
+  organizes: 'organises',
+  centre: 'center',
+  centres: 'centers',
+  theatre: 'theater',
+  travelling: 'traveling',
+  travelled: 'traveled',
+  learnt: 'learned',
+};
+
+function normalizeWordToken(word: string): string {
+  return word.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 /**
- * AI Pronunciation & Accuracy Diagnostic Evaluator:
- * Compares student spoken transcript against target sentence.
- * Returns word-by-word highlight coding (Green, Orange, Red) and Ms Mèo's advice.
+ * Checks whether target and spoken represent an exact match (never forgiving -s/-ed/-ing mismatches!).
+ */
+function isWordExactMatch(targetNorm: string, spokenNorm: string): boolean {
+  if (!targetNorm || !spokenNorm) return false;
+  if (targetNorm === spokenNorm) return true;
+
+  // Cardinal number equivalence from STT (e.g. "15" === "fifteen")
+  const numTarget = NUMBER_EQUIVALENTS[targetNorm] || targetNorm;
+  const numSpoken = NUMBER_EQUIVALENTS[spokenNorm] || spokenNorm;
+  if (numTarget === numSpoken) return true;
+
+  // Exact US/UK spelling equivalent (only same-inflection pairs)
+  const spTarget = SPELLING_EQUIVALENTS[targetNorm] || targetNorm;
+  const spSpoken = SPELLING_EQUIVALENTS[spokenNorm] || spokenNorm;
+  if (spTarget === spSpoken) return true;
+
+  return false;
+}
+
+/**
+ * Detects strict inflection/ending errors (-s/-es/-ies, -ed/-d/-ied, -ing).
+ * E.g. "expands" -> "expand", "decided" -> "decide", "worked" -> "work", "stopped" -> "stop".
+ */
+export function detectEndingSoundError(
+  targetNorm: string,
+  spokenNorm: string
+): { errorType: 'ending-s' | 'ending-ed' | 'ending-ing'; detailNote: string } | null {
+  if (!targetNorm || !spokenNorm || targetNorm === spokenNorm) return null;
+
+  // 1. Missing -s / -es / -ies / -ves (e.g. expands -> expand, boxes -> box, studies -> study)
+  const isMissingS =
+    targetNorm === `${spokenNorm}s` ||
+    targetNorm === `${spokenNorm}es` ||
+    (targetNorm.endsWith('ies') &&
+      spokenNorm.endsWith('y') &&
+      targetNorm.slice(0, -3) === spokenNorm.slice(0, -1)) ||
+    (targetNorm.endsWith('ves') &&
+      (spokenNorm.endsWith('f') || spokenNorm.endsWith('fe')) &&
+      targetNorm.slice(0, -3) === spokenNorm.slice(0, spokenNorm.endsWith('fe') ? -2 : -1));
+
+  if (isMissingS) {
+    return {
+      errorType: 'ending-s',
+      detailNote: `Missing ending -s/-es sound ("${spokenNorm}" instead of "${targetNorm}")`,
+    };
+  }
+
+  // Extra -s / -es (e.g. expand -> expands)
+  const isExtraS =
+    spokenNorm === `${targetNorm}s` ||
+    spokenNorm === `${targetNorm}es` ||
+    (spokenNorm.endsWith('ies') &&
+      targetNorm.endsWith('y') &&
+      spokenNorm.slice(0, -3) === targetNorm.slice(0, -1));
+
+  if (isExtraS) {
+    return {
+      errorType: 'ending-s',
+      detailNote: `Extra ending -s/-es sound ("${spokenNorm}" instead of "${targetNorm}")`,
+    };
+  }
+
+  // 2. Missing -ed / -d / -ied (e.g. decided -> decide, worked -> work, stopped -> stop, studied -> study)
+  const isMissingEd =
+    targetNorm === `${spokenNorm}d` ||
+    targetNorm === `${spokenNorm}ed` ||
+    (targetNorm.endsWith('ed') &&
+      targetNorm.length > 4 &&
+      targetNorm[targetNorm.length - 3] === targetNorm[targetNorm.length - 4] &&
+      targetNorm.slice(0, -3) === spokenNorm) ||
+    (targetNorm.endsWith('ied') &&
+      spokenNorm.endsWith('y') &&
+      targetNorm.slice(0, -3) === spokenNorm.slice(0, -1));
+
+  if (isMissingEd) {
+    return {
+      errorType: 'ending-ed',
+      detailNote: `Missing ending -ed/-d sound ("${spokenNorm}" instead of "${targetNorm}")`,
+    };
+  }
+
+  // Extra -ed / -d (e.g. decide -> decided)
+  const isExtraEd =
+    spokenNorm === `${targetNorm}d` ||
+    spokenNorm === `${targetNorm}ed` ||
+    (spokenNorm.endsWith('ed') &&
+      spokenNorm.length > 4 &&
+      spokenNorm[spokenNorm.length - 3] === spokenNorm[spokenNorm.length - 4] &&
+      spokenNorm.slice(0, -3) === targetNorm) ||
+    (spokenNorm.endsWith('ied') &&
+      targetNorm.endsWith('y') &&
+      spokenNorm.slice(0, -3) === targetNorm.slice(0, -1));
+
+  if (isExtraEd) {
+    return {
+      errorType: 'ending-ed',
+      detailNote: `Extra ending -ed/-d sound ("${spokenNorm}" instead of "${targetNorm}")`,
+    };
+  }
+
+  // 3. Missing / Extra -ing
+  const isMissingIng =
+    targetNorm === `${spokenNorm}ing` ||
+    (targetNorm.endsWith('ing') && `${targetNorm.slice(0, -3)}e` === spokenNorm) ||
+    (targetNorm.endsWith('ing') &&
+      targetNorm.length > 5 &&
+      targetNorm[targetNorm.length - 4] === targetNorm[targetNorm.length - 5] &&
+      targetNorm.slice(0, -4) === spokenNorm);
+
+  if (isMissingIng) {
+    return {
+      errorType: 'ending-ing',
+      detailNote: `Missing ending -ing sound ("${spokenNorm}" instead of "${targetNorm}")`,
+    };
+  }
+
+  const isExtraIng =
+    spokenNorm === `${targetNorm}ing` ||
+    (spokenNorm.endsWith('ing') && `${spokenNorm.slice(0, -3)}e` === targetNorm);
+
+  if (isExtraIng) {
+    return {
+      errorType: 'ending-ing',
+      detailNote: `Extra ending -ing sound ("${spokenNorm}" instead of "${targetNorm}")`,
+    };
+  }
+
+  return null;
+}
+
+interface WordAlignmentResult {
+  alignedPairs: Array<{ targetIdx: number; spokenIdx: number | null }>;
+  extraSpokenIndices: number[];
+}
+
+/**
+ * Optimal Needleman-Wunsch sequence alignment for word-by-word comparison.
+ * Ensures omitted or extra words never cause cascading misalignment across the sentence.
+ */
+function alignWordSequences(targetNorms: string[], spokenNorms: string[]): WordAlignmentResult {
+  const m = targetNorms.length;
+  const n = spokenNorms.length;
+  const GAP_PENALTY = -2.5;
+
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  const trace: Array<Array<'diag' | 'up' | 'left'>> = Array.from({ length: m + 1 }, () =>
+    Array(n + 1).fill('up')
+  );
+
+  for (let i = 1; i <= m; i++) {
+    dp[i][0] = dp[i - 1][0] + GAP_PENALTY;
+    trace[i][0] = 'up';
+  }
+  for (let j = 1; j <= n; j++) {
+    dp[0][j] = dp[0][j - 1] + GAP_PENALTY;
+    trace[0][j] = 'left';
+  }
+
+  const pairScore = (t: string, s: string): number => {
+    if (isWordExactMatch(t, s)) return 10;
+    if (detectEndingSoundError(t, s)) return 6;
+    const sim = wordSimilarity(t, s);
+    if (sim >= 0.45) return sim * 6 - 1;
+    return -8; // Better to mark omitted + extra than force an unrelated pair
+  };
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const diagVal = dp[i - 1][j - 1] + pairScore(targetNorms[i - 1], spokenNorms[j - 1]);
+      const upVal = dp[i - 1][j] + GAP_PENALTY;
+      const leftVal = dp[i][j - 1] + GAP_PENALTY;
+
+      if (diagVal >= upVal && diagVal >= leftVal) {
+        dp[i][j] = diagVal;
+        trace[i][j] = 'diag';
+      } else if (upVal >= leftVal) {
+        dp[i][j] = upVal;
+        trace[i][j] = 'up';
+      } else {
+        dp[i][j] = leftVal;
+        trace[i][j] = 'left';
+      }
+    }
+  }
+
+  const alignedPairs: Array<{ targetIdx: number; spokenIdx: number | null }> = [];
+  const usedSpoken = new Set<number>();
+
+  let i = m;
+  let j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && trace[i][j] === 'diag') {
+      const t = targetNorms[i - 1];
+      const s = spokenNorms[j - 1];
+      const isValidPair =
+        isWordExactMatch(t, s) ||
+        detectEndingSoundError(t, s) !== null ||
+        wordSimilarity(t, s) >= 0.45;
+      if (isValidPair) {
+        alignedPairs.push({ targetIdx: i - 1, spokenIdx: j - 1 });
+        usedSpoken.add(j - 1);
+      } else {
+        alignedPairs.push({ targetIdx: i - 1, spokenIdx: null });
+      }
+      i -= 1;
+      j -= 1;
+    } else if (i > 0 && (j === 0 || trace[i][j] === 'up')) {
+      alignedPairs.push({ targetIdx: i - 1, spokenIdx: null });
+      i -= 1;
+    } else {
+      j -= 1;
+    }
+  }
+
+  alignedPairs.reverse();
+  const extraSpokenIndices: number[] = [];
+  for (let k = 0; k < n; k++) {
+    if (!usedSpoken.has(k)) {
+      extraSpokenIndices.push(k);
+    }
+  }
+
+  return { alignedPairs, extraSpokenIndices };
+}
+
+/**
+ * Strict Word-by-Word Pronunciation & Accuracy Diagnostic Evaluator:
+ * - Every word is checked strictly (exact match required for 'correct' / 1.0).
+ * - Any -s/-es or -ed/-d ending omission/addition (e.g. "expands -> expand", "decided -> decide")
+ *   is flagged as an ending error and NEVER scores 100%.
+ * - Tracks evaluation source ('voice' vs 'typing') to prevent cross-score contamination.
  */
 export function evaluatePronunciation(
   targetSentence: AnalyzedSentence,
-  studentTranscript: string
+  studentTranscript: string,
+  source: ShadowingEvaluationSource = 'voice'
 ): ShadowingResult {
-  const targetWords = targetSentence.words.map((w) => w.toLowerCase().replace(/[^\w]/g, ''));
-  const spokenWords = studentTranscript
-    .toLowerCase()
-    .replace(/[^\w\s]/g, '')
+  const targetRawWords = targetSentence.words;
+  const targetNorms = targetRawWords.map((w) => normalizeWordToken(w));
+
+  const spokenRawWords = studentTranscript
+    .trim()
     .split(/\s+/)
-    .filter((w) => w.length > 0);
+    .map((w) => w.replace(/[^\w'-]/g, ''))
+    .filter((w) => normalizeWordToken(w).length > 0);
+  const spokenNorms = spokenRawWords.map((w) => normalizeWordToken(w));
+
+  const { alignedPairs, extraSpokenIndices } = alignWordSequences(targetNorms, spokenNorms);
+  const extraWords = extraSpokenIndices.map((idx) => spokenRawWords[idx]);
 
   const wordComparisons: WordComparison[] = [];
   const missedWords: string[] = [];
   const mispronouncedWords: { target: string; spoken: string }[] = [];
   const missingEndings: string[] = [];
 
-  let spokenIdx = 0;
-  let correctCount = 0;
+  let earnedPoints = 0;
+  let exactWordCount = 0;
+  let endingErrorCount = 0;
 
-  for (let i = 0; i < targetWords.length; i++) {
-    const target = targetWords[i];
-    const originalFormatted = targetSentence.words[i] || target;
+  for (const pair of alignedPairs) {
+    const targetNorm = targetNorms[pair.targetIdx];
+    const originalFormatted = targetRawWords[pair.targetIdx] || targetNorm;
 
-    // Look in a small sliding window in spokenWords
-    let bestMatchIdx = -1;
-    let bestSim = 0;
-
-    for (let j = spokenIdx; j < Math.min(spokenIdx + 3, spokenWords.length); j++) {
-      const sim = wordSimilarity(target, spokenWords[j]);
-      if (sim > bestSim) {
-        bestSim = sim;
-        bestMatchIdx = j;
-      }
-    }
-
-    if (bestSim >= 0.82) {
-      // Correct!
-      wordComparisons.push({
-        targetWord: originalFormatted,
-        spokenWord: spokenWords[bestMatchIdx],
-        status: 'correct',
-      });
-      correctCount += 1;
-      spokenIdx = bestMatchIdx + 1;
-    } else if (bestSim >= 0.45 && bestMatchIdx !== -1) {
-      // Mispronounced or missing ending sound
-      const spokenWord = spokenWords[bestMatchIdx];
-      let detail = 'Sound variation detected';
-
-      // Check ending sounds: -ed, -s, -ing
-      if ((target.endsWith('ed') || target.endsWith('d')) && !spokenWord.endsWith('d')) {
-        detail = 'Check ending -ed sound';
-        missingEndings.push(`'-ed' in "${originalFormatted}"`);
-      } else if ((target.endsWith('s') || target.endsWith('es')) && !spokenWord.endsWith('s')) {
-        detail = 'Missing ending -s sound';
-        missingEndings.push(`'-s' in "${originalFormatted}"`);
-      } else if (target.endsWith('ing') && !spokenWord.endsWith('ing')) {
-        detail = 'Missing -ing ending';
-        missingEndings.push(`'-ing' in "${originalFormatted}"`);
-      } else {
-        mispronouncedWords.push({ target: originalFormatted, spoken: spokenWord });
-      }
-
-      wordComparisons.push({
-        targetWord: originalFormatted,
-        spokenWord,
-        status: 'mispronounced',
-        detailNote: detail,
-      });
-      correctCount += 0.5;
-      spokenIdx = bestMatchIdx + 1;
-    } else {
-      // Omitted / Missed
+    if (pair.spokenIdx === null) {
       wordComparisons.push({
         targetWord: originalFormatted,
         status: 'omitted',
         detailNote: 'Omitted or unclear',
+        errorType: 'omitted',
       });
       missedWords.push(originalFormatted);
+      continue;
     }
+
+    const spokenNorm = spokenNorms[pair.spokenIdx];
+    const spokenDisplay = spokenRawWords[pair.spokenIdx] || spokenNorm;
+
+    if (isWordExactMatch(targetNorm, spokenNorm)) {
+      wordComparisons.push({
+        targetWord: originalFormatted,
+        spokenWord: spokenDisplay,
+        status: 'correct',
+        errorType: 'exact',
+      });
+      earnedPoints += 1.0;
+      exactWordCount += 1;
+      continue;
+    }
+
+    const endingErr = detectEndingSoundError(targetNorm, spokenNorm);
+    if (endingErr) {
+      endingErrorCount += 1;
+      missingEndings.push(
+        `${endingErr.errorType === 'ending-s' ? "'-s/-es'" : endingErr.errorType === 'ending-ed' ? "'-ed/-d'" : "'-ing'"} in "${originalFormatted}" (got "${spokenDisplay}")`
+      );
+      wordComparisons.push({
+        targetWord: originalFormatted,
+        spokenWord: spokenDisplay,
+        status: 'mispronounced',
+        detailNote: endingErr.detailNote,
+        errorType: endingErr.errorType,
+      });
+      earnedPoints += 0.5;
+      continue;
+    }
+
+    const sim = wordSimilarity(targetNorm, spokenNorm);
+    const partialWeight = sim >= 0.7 ? 0.5 : 0.35;
+    mispronouncedWords.push({ target: originalFormatted, spoken: spokenDisplay });
+    wordComparisons.push({
+      targetWord: originalFormatted,
+      spokenWord: spokenDisplay,
+      status: 'mispronounced',
+      detailNote: `Pronunciation mismatch ("${spokenDisplay}" vs "${originalFormatted}")`,
+      errorType: 'mispronounced',
+    });
+    earnedPoints += partialWeight;
   }
 
-  // Calculate final score (0 - 100)
-  const rawScore = targetWords.length > 0 ? (correctCount / targetWords.length) * 100 : 0;
-  const accuracyScore = Math.min(100, Math.max(0, Math.round(rawScore)));
+  // Deduct small penalty for extra unrelated spoken words
+  if (extraWords.length > 0) {
+    earnedPoints = Math.max(0, earnedPoints - extraWords.length * 0.25);
+  }
+
+  const totalTargetWords = targetNorms.length;
+  const rawScore = totalTargetWords > 0 ? (earnedPoints / totalTargetWords) * 100 : 0;
+  let accuracyScore = Math.min(100, Math.max(0, Math.round(rawScore)));
+
+  // STRICT RULE: Any word error (especially -s/-ed ending error, mispronunciation, omission, or extra words)
+  // MUST NEVER achieve 100%!
+  const hasAnyError =
+    exactWordCount < totalTargetWords ||
+    endingErrorCount > 0 ||
+    extraWords.length > 0;
+
+  if (hasAnyError && accuracyScore >= 100) {
+    accuracyScore = 99;
+  }
+  if (totalTargetWords === 0 || spokenNorms.length === 0) {
+    accuracyScore = 0;
+  }
 
   // Cat Rating
-  let ratingLabel = '🐾 92/100 - Purr-fect!';
-  if (accuracyScore >= 90) {
-    ratingLabel = `🐾 ${accuracyScore}/100 - Purr-fect! Golden Paw!`;
+  let ratingLabel = `🐾 ${accuracyScore}/100 - Cozy Warm-up Needed!`;
+  if (accuracyScore === 100) {
+    ratingLabel = `🐾 100/100 - Purr-fect! Golden Paw!`;
+  } else if (accuracyScore >= 90) {
+    ratingLabel = `🐾 ${accuracyScore}/100 - Almost Purr-fect! Check Details!`;
   } else if (accuracyScore >= 75) {
     ratingLabel = `🐾 ${accuracyScore}/100 - Great Whisker Work!`;
   } else if (accuracyScore >= 50) {
     ratingLabel = `🐾 ${accuracyScore}/100 - Good Paws! Keep Scratching!`;
-  } else {
-    ratingLabel = `🐾 ${accuracyScore}/100 - Cozy Warm-up Needed!`;
   }
 
   // Generate dynamic Cat Advice
   let catComment = '';
-  if (accuracyScore >= 95) {
-    catComment = `Meow-velous job! Your rhythm, pronunciation, and linking sounds sounded completely natural. You sounded just like a native speaker!`;
+  if (accuracyScore === 100) {
+    catComment = `Meow-velous job! Every single word, ending sound (-s/-ed), and rhythm matched 100%. You sounded just like a native speaker!`;
+  } else if (missingEndings.length > 0) {
+    catComment = `Good rhythm, but Ms Mèo caught ending-sound slip(s): ${missingEndings.slice(0, 2).join(' and ')}. Ending sounds (-s / -ed) are crucial for tense and grammar, so you can't get 100% until they are crisp!`;
   } else if (accuracyScore >= 80) {
-    if (missingEndings.length > 0) {
-      catComment = `Almost purr-fect! Just be mindful of your ending sounds: pay extra attention to ${missingEndings.slice(0, 2).join(' and ')}. Keep your tongue relaxed!`;
-    } else if (mispronouncedWords.length > 0) {
-      catComment = `Wonderful rhythm! Focus slightly more on articulating "${mispronouncedWords[0].target}" — listen to Ms Mèo's sample voice once more to catch the vowel quality.`;
+    if (mispronouncedWords.length > 0) {
+      catComment = `Wonderful rhythm! Focus slightly more on articulating "${mispronouncedWords[0].target}" (heard "${mispronouncedWords[0].spoken}") — listen to Ms Mèo's sample voice once more.`;
+    } else if (missedWords.length > 0) {
+      catComment = `Strong pace! You skipped "${missedWords.slice(0, 2).join('", "')}". Try reading every word clearly without dropping small words.`;
     } else {
-      catComment = `Great flow! Your pacing was confident and clear. Practice once more at 1.0x speed to solidify your muscle memory!`;
+      catComment = `Very close! Watch out for extra words so your sentence matches cleanly word-for-word.`;
     }
   } else if (accuracyScore >= 55) {
     if (missedWords.length > 0) {
       catComment = `Good effort! You skipped or swallowed "${missedWords.slice(0, 2).join('", "')}". Try listening at 0.75x slow speed and tap your paw to each word beat!`;
     } else {
-      catComment = `Nice attempt! Some vowel sounds were a bit quick. Take a deep breath, listen to Ms Mèo, and shadow word-by-word with the audio player.`;
+      catComment = `Nice attempt! Some sounds need tighter accuracy. Listen to Ms Mèo at 0.75x speed and shadow word-by-word.`;
     }
   } else {
-    catComment = `Don't worry, little learner! English vowels and endings take patience. Turn on "🔁 Loop Shadowing", listen three times, and repeat softly until the sounds feel cozy on your tongue!`;
+    catComment = `Don't worry, little learner! English vowels and endings take patience. Turn on "🔁 Loop Shadowing", listen three times, and repeat softly until every word is clear!`;
   }
 
   return {
@@ -370,8 +796,133 @@ export function evaluatePronunciation(
     catComment,
     wordComparisons,
     timestamp: Date.now(),
+    source,
+    endingErrorCount,
+    exactWordCount,
+    totalTargetWords,
+    extraWords,
   };
 }
+
+export interface DictationWordDiff {
+  expected: string;
+  actual: string;
+  isMatch: boolean;
+  errorNote?: string;
+}
+
+export interface DictationSentenceEvaluation {
+  score: number;
+  wordDiffs: DictationWordDiff[];
+  endingErrorCount: number;
+  exactWordCount: number;
+}
+
+/**
+ * Strict Dictation Evaluator (Audio-to-Text):
+ * Uses optimal word alignment so omitted words don't shift the whole sentence,
+ * and requires exact spelling (-s/-ed must match 100%).
+ */
+export function evaluateDictationSentence(
+  targetSentence: AnalyzedSentence,
+  userInput: string
+): DictationSentenceEvaluation {
+  const targetRawWords = targetSentence.words;
+  const targetNorms = targetRawWords.map((w) => normalizeWordToken(w));
+
+  const actualRawWords = userInput
+    .trim()
+    .split(/\s+/)
+    .map((w) => w.replace(/[^\w'-]/g, ''))
+    .filter((w) => normalizeWordToken(w).length > 0);
+  const actualNorms = actualRawWords.map((w) => normalizeWordToken(w));
+
+  const { alignedPairs, extraSpokenIndices } = alignWordSequences(targetNorms, actualNorms);
+
+  let exactWordCount = 0;
+  let endingErrorCount = 0;
+
+  const wordDiffs: DictationWordDiff[] = alignedPairs.map((pair) => {
+    const expectedDisplay = targetRawWords[pair.targetIdx] || targetNorms[pair.targetIdx];
+    const targetNorm = targetNorms[pair.targetIdx];
+
+    if (pair.spokenIdx === null) {
+      return {
+        expected: expectedDisplay,
+        actual: '',
+        isMatch: false,
+        errorNote: 'Omitted',
+      };
+    }
+
+    const actualNorm = actualNorms[pair.spokenIdx];
+    const actualDisplay = actualRawWords[pair.spokenIdx] || actualNorm;
+    const isExact = isWordExactMatch(targetNorm, actualNorm);
+
+    if (isExact) {
+      exactWordCount += 1;
+      return {
+        expected: expectedDisplay,
+        actual: actualDisplay,
+        isMatch: true,
+      };
+    }
+
+    const endingErr = detectEndingSoundError(targetNorm, actualNorm);
+    if (endingErr) {
+      endingErrorCount += 1;
+    }
+
+    return {
+      expected: expectedDisplay,
+      actual: actualDisplay,
+      isMatch: false,
+      errorNote: endingErr?.detailNote || 'Spelling mismatch',
+    };
+  });
+
+  const totalTarget = Math.max(1, targetNorms.length);
+  const adjustedExact = Math.max(0, exactWordCount - extraSpokenIndices.length * 0.25);
+  let score = Math.round((adjustedExact / totalTarget) * 100);
+  if ((exactWordCount < targetNorms.length || extraSpokenIndices.length > 0) && score >= 100) {
+    score = 99;
+  }
+  if (actualNorms.length === 0) {
+    score = 0;
+  }
+
+  return {
+    score: Math.min(100, Math.max(0, score)),
+    wordDiffs,
+    endingErrorCount,
+    exactWordCount,
+  };
+}
+
+/**
+ * Built-in mandatory test sentences covering -s ("expands -> expand") and -ed ("decided -> decide")
+ * for verification & quick diagnostic testing.
+ */
+export const MANDATORY_SHADOWING_TEST_CASES = [
+  {
+    id: 'test-ending-s',
+    label: 'T1: Lỗi -s (expands → expand)',
+    targetText: 'When students read English for just fifteen minutes every morning, their vocabulary naturally expands.',
+    badTranscript: 'When students read English for just fifteen minutes every morning, their vocabulary naturally expand.',
+    expectedTargetWord: 'expands',
+    expectedSpokenWord: 'expand',
+    errorType: 'ending-s' as WordComparisonErrorType,
+  },
+  {
+    id: 'test-ending-ed',
+    label: 'T2: Lỗi -ed (decided → decide)',
+    targetText: 'Have you decided on your target university yet?',
+    badTranscript: 'Have you decide on your target university yet?',
+    expectedTargetWord: 'decided',
+    expectedSpokenWord: 'decide',
+    errorType: 'ending-ed' as WordComparisonErrorType,
+  },
+];
 
 /**
  * Task 1: Generate 10 Word Recognition Chips (5 Targets from text + 5 Distractors).

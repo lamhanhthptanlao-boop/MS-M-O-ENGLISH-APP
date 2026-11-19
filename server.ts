@@ -189,7 +189,7 @@ app.post('/api/assignments', (req, res) => {
       className = '',
       teacherNotes = '',
       dueDate = '',
-      assignedTask = 'listening',
+      assignedTask = 'all',
     } = req.body;
     if (!rawText || !rawText.trim()) {
       return res.status(400).json({ error: 'Bài học không được để trống nội dung.' });
@@ -206,7 +206,7 @@ app.post('/api/assignments', (req, res) => {
       className: className.trim(),
       teacherNotes: teacherNotes.trim(),
       dueDate: dueDate.trim(),
-      assignedTask: assignedTask || 'listening',
+      assignedTask: assignedTask || 'all',
       createdAt: new Date().toISOString(),
     };
 
@@ -268,6 +268,14 @@ app.post('/api/assignments/:id/submissions', (req, res) => {
     const {
       studentName,
       studentClass = '',
+      taskType = 'listening',
+      listeningCompleted = false,
+      listeningDurationSeconds = 0,
+      voiceCount,
+      voiceAvgScore,
+      typingMatchCount = 0,
+      typingMatchScore = 0,
+      dictationCount = 0,
       shadowingCount = 0,
       shadowingAvgScore = 0,
       quizScore = 0,
@@ -282,14 +290,25 @@ app.post('/api/assignments/:id/submissions', (req, res) => {
       return res.status(400).json({ error: 'Vui lòng nhập họ và tên học sinh.' });
     }
 
+    const resolvedVoiceCount = Number(voiceCount ?? shadowingCount) || 0;
+    const resolvedVoiceAvgScore = Math.round(Number(voiceAvgScore ?? shadowingAvgScore) || 0);
+
     const submissions = loadSubmissionsData();
     const newSubmission = {
       id: `sub_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       assignmentId,
       studentName: studentName.trim(),
       studentClass: studentClass.trim(),
-      shadowingCount: Number(shadowingCount) || 0,
-      shadowingAvgScore: Math.round(Number(shadowingAvgScore) || 0),
+      taskType,
+      listeningCompleted: Boolean(listeningCompleted),
+      listeningDurationSeconds: Number(listeningDurationSeconds) || 0,
+      voiceCount: resolvedVoiceCount,
+      voiceAvgScore: resolvedVoiceAvgScore,
+      typingMatchCount: Number(typingMatchCount) || 0,
+      typingMatchScore: Math.round(Number(typingMatchScore) || 0),
+      dictationCount: Number(dictationCount) || 0,
+      shadowingCount: resolvedVoiceCount,
+      shadowingAvgScore: resolvedVoiceAvgScore,
       quizScore: Math.round(Number(quizScore) || 0),
       quizCorrectCount: Number(quizCorrectCount) || 0,
       quizTotal: Number(quizTotal) || 0,

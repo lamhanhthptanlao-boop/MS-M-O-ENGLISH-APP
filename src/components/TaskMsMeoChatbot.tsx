@@ -32,6 +32,7 @@ interface TaskMsMeoChatbotProps {
   sentences: AnalyzedSentence[];
   voiceSettings: VoiceSettings;
   soundEnabled: boolean;
+  language?: 'en' | 'vi';
   onChatActivity?: () => void;
   isStudentMode?: boolean;
 }
@@ -41,9 +42,11 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
   sentences,
   voiceSettings,
   soundEnabled,
+  language = 'vi',
   onChatActivity,
   isStudentMode = false,
 }) => {
+  const isEn = language === 'en';
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome-msg',
@@ -322,18 +325,28 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
     if (soundEnabled) playSoftTone();
   };
 
-  const quickQuestions = [
-    'Sửa phát âm câu này cho em',
-    'Sửa lỗi khi nói & ngữ pháp',
-    'Hỏi em câu hỏi về bài đọc',
-    'Explain key grammar rules in this text',
-    'What are the main vocabulary words?',
-    'Summarize the main idea',
-    'Generate a practice dialogue for two people',
-  ];
+  const quickQuestions = isEn
+    ? [
+        'Check my pronunciation of this sentence',
+        'Correct my grammar & speaking slips',
+        'Ask me a comprehension question',
+        'Explain key grammar rules in this text',
+        'What are the main vocabulary words?',
+        'Summarize the main idea',
+        'Generate a practice dialogue for two people',
+      ]
+    : [
+        'Sửa phát âm câu này cho em',
+        'Sửa lỗi khi nói & ngữ pháp',
+        'Hỏi em câu hỏi về bài đọc',
+        'Giải thích cấu trúc ngữ pháp chính trong bài',
+        'Liệt kê từ vựng quan trọng trong bài',
+        'Tóm tắt ý chính của đoạn văn',
+        'Tạo đoạn hội thoại luyện nói 2 người',
+      ];
 
   return (
-    <div className="bg-white rounded-3xl p-5 sm:p-7 border border-pink-200 shadow-sm flex flex-col h-[740px] relative overflow-hidden">
+    <div className="bg-white rounded-3xl p-4 sm:p-7 border border-pink-200 shadow-sm flex flex-col h-[640px] sm:h-[740px] relative overflow-hidden max-w-full">
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-pink-100 shrink-0">
         <div className="flex items-center gap-3">
@@ -354,15 +367,17 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
               }`}
             />
           </div>
-          <div>
-            <h3 className="font-heading font-bold text-base text-slate-800 flex items-center gap-2">
-              <span>Ms Mèo's Interactive Classroom</span>
+          <div className="min-w-0">
+            <h3 className="font-heading font-bold text-sm sm:text-base text-slate-800 flex items-center gap-2 flex-wrap">
+              <span>{isEn ? "Ms Mèo's Interactive Classroom" : 'Lớp học Tương tác cùng Ms Mèo'}</span>
               <span className="text-[11px] font-bold text-pink-700 bg-pink-50 border border-pink-200 px-2 py-0.5 rounded-full">
-                Gemini Live Voice & Text
+                {isEn ? 'Live Voice & Text' : 'Thoại & Chat Trực tiếp'}
               </span>
             </h3>
             <p className="text-xs text-slate-500">
-              Speak directly in real time • Instant audio feedback with speaker tags stripped
+              {isEn
+                ? 'Speak or type in English or Vietnamese • Instant audio coaching'
+                : 'Nói hoặc gõ trực tiếp • Sửa phát âm & phản hồi tức thì bằng giọng nói'}
             </p>
           </div>
         </div>
@@ -446,9 +461,9 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                  {isStudentMode
-                    ? 'Gemini 3.8 Live Voice Call • Chatting with Ms Mèo'
-                    : 'Gemini 3.8 Live Voice Call • Đồng hành cùng Ms Mèo'}
+                  {isEn
+                    ? 'Ms Mèo Live Voice Call • Interactive Audio'
+                    : 'Cuộc gọi thoại trực tiếp với Ms Mèo'}
                 </span>
               </div>
 
@@ -456,34 +471,34 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
                 onClick={handleEndLiveCall}
                 className="text-xs font-bold text-slate-500 hover:text-rose-600 px-2.5 py-1 rounded-lg hover:bg-rose-50 transition-colors"
               >
-                {isStudentMode ? 'Switch to text chat ✕' : 'Chuyển về khung chat text ✕'}
+                {isEn ? 'Switch to text chat ✕' : 'Chuyển về khung chat text ✕'}
               </button>
             </div>
 
             {/* Language Mode Bar (Single Language Discipline) */}
             <div className="flex flex-wrap items-center justify-center gap-1.5 p-1 bg-white/90 border border-pink-200 rounded-2xl shadow-xs max-w-2xl mx-auto">
               <span className="text-[11px] font-bold text-slate-500 px-2 flex items-center gap-1">
-                <span>🌐 {isStudentMode ? 'Language:' : 'Ngôn ngữ:'}</span>
+                <span>🌐 {isEn ? 'Language:' : 'Ngôn ngữ:'}</span>
               </span>
               {[
                 {
                   id: 'auto',
-                  label: isStudentMode ? '🔄 Auto (English default)' : '🔄 1 Thứ tiếng • Đổi khi cần (Mặc định)',
-                  desc: isStudentMode
+                  label: isEn ? '🔄 Auto (English default)' : '🔄 1 Thứ tiếng • Đổi khi cần (Mặc định)',
+                  desc: isEn
                     ? 'Ms Mèo speaks strictly one language per turn (default English), switches to Vietnamese only when prompted.'
                     : 'Ms Mèo nói duy nhất một thứ tiếng mỗi lượt (mặc định tiếng Anh), chỉ đổi sang tiếng Việt khi bạn nói tiếng Việt hoặc yêu cầu.',
                 },
                 {
                   id: 'en',
-                  label: isStudentMode ? '🇬🇧 English Only' : '🇬🇧 Chỉ tiếng Anh (EN only)',
-                  desc: isStudentMode
+                  label: isEn ? '🇬🇧 English Only' : '🇬🇧 Chỉ tiếng Anh (EN only)',
+                  desc: isEn
                     ? '100% English throughout the call to sharpen fluency.'
                     : '100% tiếng Anh trong toàn bộ cuộc gọi để luyện phản xạ.',
                 },
                 {
                   id: 'vi',
-                  label: isStudentMode ? '🇻🇳 Vietnamese Only' : '🇻🇳 Chỉ tiếng Việt (VI only)',
-                  desc: isStudentMode
+                  label: isEn ? '🇻🇳 Vietnamese Only' : '🇻🇳 Chỉ tiếng Việt (VI only)',
+                  desc: isEn
                     ? 'Vietnamese explanations and feedback.'
                     : '100% tiếng Việt để giải thích và nhận xét cặn kẽ.',
                 },
@@ -512,29 +527,29 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
               {[
                 {
                   id: 'all',
-                  label: isStudentMode ? '🎯 All-in-One (3-in-1)' : '🎯 Toàn diện (3 trong 1)',
-                  desc: isStudentMode
+                  label: isEn ? '🎯 All-in-One (3-in-1)' : '🎯 Toàn diện (3 trong 1)',
+                  desc: isEn
                     ? 'Pronunciation + Speaking corrections + Reading Q&A'
                     : 'Sửa phát âm + Lỗi khi nói + Hỏi đáp bài đọc',
                 },
                 {
                   id: 'pronunciation',
-                  label: isStudentMode ? '🎙️ Pronunciation & Intonation' : '🎙️ Sửa phát âm & Ngữ điệu',
-                  desc: isStudentMode
+                  label: isEn ? '🎙️ Pronunciation & Intonation' : '🎙️ Sửa phát âm & Ngữ điệu',
+                  desc: isEn
                     ? 'Ending sounds, word stress & phonetic clarity'
                     : 'Chỉ ra âm đuôi, trọng âm, nguyên âm khó',
                 },
                 {
                   id: 'mistakes',
-                  label: isStudentMode ? '✍️ Speaking Corrections' : '✍️ Sửa lỗi khi nói',
-                  desc: isStudentMode
+                  label: isEn ? '✍️ Speaking Corrections' : '✍️ Sửa lỗi khi nói',
+                  desc: isEn
                     ? 'Grammar slip check, word choice & natural phrasing'
                     : 'Bắt lỗi ngữ pháp, dùng từ, gợi ý câu tự nhiên',
                 },
                 {
                   id: 'topic',
-                  label: isStudentMode ? '💬 Reading Topic Q&A' : '💬 Hỏi đáp theo bài đọc',
-                  desc: isStudentMode
+                  label: isEn ? '💬 Reading Topic Q&A' : '💬 Hỏi đáp theo bài đọc',
+                  desc: isEn
                     ? 'Two-way dialogue on the reading passage themes'
                     : 'Đàm thoại & phản xạ theo chủ đề bài đọc',
                 },
@@ -562,7 +577,7 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
             <div className="flex items-center justify-center gap-1.5 text-[11px] font-medium text-emerald-800 bg-emerald-50/90 border border-emerald-200 px-3 py-1 rounded-full max-w-xl mx-auto">
               <span>✨</span>
               <span>
-                {isStudentMode
+                {isEn
                   ? languageMode === 'auto'
                     ? 'Single Language Discipline: Ms Mèo speaks 100% English. If you speak Vietnamese, Ms Mèo will switch to Vietnamese!'
                     : languageMode === 'en'
@@ -766,9 +781,9 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
       )}
 
       {/* Quick Prompts Bar */}
-      <div className="py-2.5 overflow-x-auto flex items-center gap-2 border-b border-pink-50 shrink-0">
+      <div className="py-2.5 overflow-x-auto flex items-center gap-2 border-b border-pink-50 shrink-0 max-w-full">
         <span className="text-[11px] font-bold text-slate-400 whitespace-nowrap">
-          Quick Prompts:
+          {isEn ? 'Quick Prompts:' : 'Gợi ý nhanh:'}
         </span>
         {quickQuestions.map((q, idx) => (
           <button
@@ -791,7 +806,7 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
             onClick={() => setMicError(null)}
             className="font-bold underline ml-2"
           >
-            Dismiss
+            {isEn ? 'Dismiss' : 'Đóng'}
           </button>
         </div>
       )}
@@ -805,7 +820,7 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
           return (
             <div
               key={msg.id}
-              className={`flex items-start gap-3 ${
+              className={`flex items-start gap-2.5 sm:gap-3 ${
                 isMeo ? 'justify-start' : 'justify-end'
               }`}
             >
@@ -816,7 +831,7 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
               )}
 
               <div
-                className={`max-w-[85%] sm:max-w-[75%] rounded-2xl p-4 text-xs sm:text-sm leading-relaxed shadow-xs relative ${
+                className={`max-w-[85%] sm:max-w-[75%] rounded-2xl p-3.5 sm:p-4 text-xs sm:text-sm leading-relaxed shadow-xs relative break-words ${
                   isMeo
                     ? 'bg-pink-50/60 border border-pink-200/90 text-slate-800'
                     : 'bg-gradient-to-r from-pink-500 to-rose-500 text-white rounded-tr-none'
@@ -827,9 +842,9 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
 
                 {/* Footer with Audio Playback */}
                 {isMeo && (
-                  <div className="mt-3 pt-2.5 border-t border-pink-100 flex items-center justify-between gap-2">
+                  <div className="mt-3 pt-2.5 border-t border-pink-100 flex flex-wrap items-center justify-between gap-2">
                     <span className="text-[10px] text-slate-400 font-medium">
-                      Natural Speech (Speaker Tags Stripped)
+                      {isEn ? 'Natural Speech (Tags Stripped)' : 'Đọc tự nhiên (Đã lọc nhãn tên)'}
                     </span>
 
                     <button
@@ -842,7 +857,11 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
                       }`}
                     >
                       <Volume2 className="w-3.5 h-3.5" />
-                      <span>{isPlaying ? 'Playing Audio...' : '🔊 Listen to Ms Mèo'}</span>
+                      <span>
+                        {isPlaying
+                          ? isEn ? 'Playing Audio...' : 'Đang phát...'
+                          : isEn ? '🔊 Listen to Ms Mèo' : '🔊 Nghe Ms Mèo'}
+                      </span>
                     </button>
                   </div>
                 )}
@@ -861,7 +880,9 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
         {isLoadingReply && (
           <div className="flex items-center gap-2 text-xs text-pink-600 bg-pink-50/70 p-3 rounded-2xl w-fit">
             <Loader2 className="w-4 h-4 animate-spin" />
-            <span>Ms Mèo is thinking of cozy advice...</span>
+            <span>
+              {isEn ? 'Ms Mèo is thinking of cozy advice...' : 'Ms Mèo đang soạn lời khuyên cho bạn...'}
+            </span>
           </div>
         )}
 
@@ -871,7 +892,7 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
       {/* Input Form with Dual Modes (Text + Voice Recognition + Hands-Free Toggle) */}
       <div className="pt-3 border-t border-pink-100 shrink-0 space-y-2">
         {/* Hands-Free continuous voice dialogue toggle */}
-        <div className="flex items-center justify-between px-1">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1">
           <button
             type="button"
             onClick={() => {
@@ -893,15 +914,15 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
             <Radio className={`w-3.5 h-3.5 ${isHandsFreeActive ? 'text-emerald-600 animate-pulse' : ''}`} />
             <span>
               {isHandsFreeActive
-                ? 'Continuous Voice Dialogue: ON (Hands-Free)'
-                : 'Turn on Continuous Voice Dialogue'}
+                ? isEn ? 'Continuous Voice Dialogue: ON' : 'Thoại liên tục: ĐANG BẬT'
+                : isEn ? 'Turn on Continuous Voice' : 'Bật Thoại liên tục (Rảnh tay)'}
             </span>
           </button>
 
           {isVoiceRecording && (
             <span className="text-[11px] text-rose-600 font-bold animate-pulse flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-rose-500" />
-              Recording voice...
+              {isEn ? 'Recording voice...' : 'Đang thu âm...'}
             </span>
           )}
         </div>
@@ -917,8 +938,12 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
           <button
             type="button"
             onClick={handleToggleVoiceInput}
-            title={isVoiceRecording ? 'Stop speaking' : 'Tap to speak your question'}
-            className={`p-3 rounded-2xl text-white transition-all shadow-xs shrink-0 ${
+            title={
+              isVoiceRecording
+                ? isEn ? 'Stop speaking' : 'Dừng nói'
+                : isEn ? 'Tap to speak your question' : 'Nhấn để nói câu hỏi'
+            }
+            className={`p-2.5 sm:p-3 rounded-2xl text-white transition-all shadow-xs shrink-0 ${
               isVoiceRecording
                 ? 'bg-rose-600 animate-mic-pulse ring-4 ring-rose-200'
                 : 'bg-pink-100 text-pink-700 hover:bg-pink-200 border border-pink-200'
@@ -938,17 +963,21 @@ export const TaskMsMeoChatbot: React.FC<TaskMsMeoChatbotProps> = ({
             onChange={(e) => setInputQuery(e.target.value)}
             placeholder={
               isVoiceRecording
-                ? 'Listening to you speak... (or tap to finish)'
-                : 'Ask Ms Mèo about grammar, vocabulary, or pronunciation...'
+                ? isEn
+                  ? 'Listening to your voice... (tap to finish)'
+                  : 'Đang nghe bạn nói... (bấm để dừng)'
+                : isEn
+                ? 'Ask Ms Mèo about grammar, vocabulary, or pronunciation...'
+                : 'Hỏi Ms Mèo về ngữ pháp, từ vựng hoặc phát âm...'
             }
-            className="flex-1 text-sm bg-slate-50 border-2 border-pink-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-pink-400 focus:bg-white transition-all placeholder:text-slate-400"
+            className="min-w-0 flex-1 text-xs sm:text-sm bg-slate-50 border-2 border-pink-200 rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3 focus:outline-none focus:ring-2 focus:ring-pink-400 focus:bg-white transition-all placeholder:text-slate-400"
           />
 
           {/* Send Button */}
           <button
             type="submit"
             disabled={!inputQuery.trim() || isLoadingReply}
-            className="p-3 rounded-2xl bg-gradient-to-r from-pink-500 to-rose-500 text-white hover:from-pink-600 hover:to-rose-600 disabled:opacity-40 disabled:cursor-not-allowed shadow-xs transition-all shrink-0"
+            className="p-2.5 sm:p-3 rounded-2xl bg-gradient-to-r from-pink-500 to-rose-500 text-white hover:from-pink-600 hover:to-rose-600 disabled:opacity-40 disabled:cursor-not-allowed shadow-xs transition-all shrink-0"
           >
             <Send className="w-5 h-5" />
           </button>

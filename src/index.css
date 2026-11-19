@@ -11,6 +11,8 @@
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11", "calt";
+    max-width: 100%;
+    overflow-x: hidden;
   }
 
   body {
@@ -20,6 +22,13 @@
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
     letter-spacing: -0.012em;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  #root {
+    max-width: 100%;
+    overflow-x: hidden;
   }
   
   h1, h2, h3, h4, h5, h6, .font-heading {

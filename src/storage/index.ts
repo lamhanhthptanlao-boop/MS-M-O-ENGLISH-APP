@@ -1,3 +1,5 @@
+import type { LessonScoreBuckets } from '../utils/scoreStore';
+
 // Local Storage Adapter for Ms Mèo's Practice Web (Replaces Firebase)
 export interface SavedLessonItem {
   id: string;
@@ -19,6 +21,7 @@ export interface SavedProgressData {
   quizScore?: number;
   unlockedBadges?: string[];
   resultsCache?: any;
+  lessonBuckets?: LessonScoreBuckets;
 }
 
 const STORAGE_KEY_LESSONS = 'ms_meo_saved_lessons';

@@ -26,11 +26,22 @@ export interface AnalyzedSentence {
   dialogueText?: string; // Clean speech content without the speaker prefix
 }
 
+export type ShadowingEvaluationSource = 'voice' | 'typing';
+
+export type WordComparisonErrorType =
+  | 'exact'
+  | 'ending-s'
+  | 'ending-ed'
+  | 'ending-ing'
+  | 'mispronounced'
+  | 'omitted';
+
 export interface WordComparison {
   targetWord: string;
   spokenWord?: string;
   status: 'correct' | 'mispronounced' | 'omitted';
   detailNote?: string;
+  errorType?: WordComparisonErrorType;
 }
 
 export interface ShadowingResult {
@@ -41,6 +52,11 @@ export interface ShadowingResult {
   catComment: string;
   wordComparisons: WordComparison[];
   timestamp: number;
+  source?: ShadowingEvaluationSource;
+  endingErrorCount?: number;
+  exactWordCount?: number;
+  totalTargetWords?: number;
+  extraWords?: string[];
 }
 
 export interface WordRecognitionItem {
@@ -119,6 +135,22 @@ export interface Assignment {
   assignedTask?: AssignedTaskType;
 }
 
+export interface PracticeStats {
+  voiceCount: number;
+  voiceScore: number;
+  typingMatchCount: number;
+  typingMatchScore: number;
+  dictationCount: number;
+  dictationScore: number;
+  // Backward-compatible aliases strictly representing Voice Score (Mic only)
+  shadowingCount: number;
+  shadowingAvgScore: number;
+  quizScore: number;
+  quizCorrectCount: number;
+  quizTotal: number;
+  wordHuntCompleted: boolean;
+}
+
 export interface AssignmentSubmission {
   id: string;
   assignmentId: string;
@@ -127,6 +159,11 @@ export interface AssignmentSubmission {
   taskType?: AssignedTaskType;
   listeningCompleted?: boolean;
   listeningDurationSeconds?: number;
+  voiceCount?: number;
+  voiceAvgScore?: number;
+  typingMatchCount?: number;
+  typingMatchScore?: number;
+  dictationCount?: number;
   shadowingCount: number;
   shadowingAvgScore: number;
   quizScore: number;
@@ -136,5 +173,49 @@ export interface AssignmentSubmission {
   dictationScore: number;
   studentNote?: string;
   submittedAt: string;
+}
+
+export interface GamificationState {
+  totalXp: number;
+  currentStreakDays: number;
+  longestStreakDays: number;
+  lastStudyDate: string; // YYYY-MM-DD local date string
+  studyDates: string[];
+  activityXpBreakdown: {
+    listening: number;
+    shadowing: number;
+    words: number;
+    quiz: number;
+    dictation: number;
+    chat: number;
+  };
+  updatedAt: string;
+}
+
+export interface LeaderboardEntry {
+  id: string;
+  studentName: string;
+  studentClass: string;
+  xp: number;
+  avgAccuracy: number;
+  completedTasks: number;
+  streakDays: number;
+  isCurrentUser?: boolean;
+  submittedAt?: string;
+}
+
+export interface AppBackupPayload {
+  app: 'ms-meo-english';
+  version: number;
+  exportedAt: string;
+  data: {
+    savedLessons: unknown[];
+    studentProgress: unknown | null;
+    unlockedBadges: unknown[];
+    activityTracker: unknown | null;
+    gamification: GamificationState | null;
+    assignments: Assignment[];
+    submissions: AssignmentSubmission[];
+  };
 }
 

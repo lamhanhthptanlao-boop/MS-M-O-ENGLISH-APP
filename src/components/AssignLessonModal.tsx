@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  Home,
   X,
   Share2,
   Copy,
@@ -20,8 +21,14 @@ import {
   MessageCircle,
   Layers,
 } from 'lucide-react';
-import { Assignment, LessonFormat, AssignedTaskType } from '../types';
+import { Assignment, LessonFormat, AssignedTaskType, DifficultyTier } from '../types';
 import { createAssignment } from '../storage/assignments';
+import { SentenceSelectionMode } from '../utils/textParser';
+import {
+  buildAssignmentShareUrl,
+  prepareAssignmentTextWithPreview,
+} from '../utils/assignmentDefaults';
+import { SentenceCutPreviewTable } from './SentenceCutPreviewTable';
 import mascotImg from '../assets/images/ms_meo_mascot_1790341757214.jpg';
 
 interface AssignLessonModalProps {
@@ -32,8 +39,13 @@ interface AssignLessonModalProps {
   language?: 'en' | 'vi';
   lessonFormat?: LessonFormat;
   initialTitle?: string;
+  defaultAssignedTask?: AssignedTaskType;
   onAssignmentCreated?: (assignment: Assignment) => void;
   onOpenAdminDashboard?: () => void;
+  onGoHome?: () => void;
+  initialSentenceChoice?: SentenceSelectionMode;
+  initialRangeFrom?: number;
+  initialRangeTo?: number;
 }
 
 interface TaskOption {
@@ -128,15 +140,20 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
   language = 'en',
   lessonFormat = 'text',
   initialTitle = '',
+  defaultAssignedTask = 'all',
   onAssignmentCreated,
   onOpenAdminDashboard,
+  onGoHome,
+  initialSentenceChoice = 'all',
+  initialRangeFrom = 1,
+  initialRangeTo,
 }) => {
   const isEn = language === 'en';
   const [title, setTitle] = useState(
     initialTitle || (isEn ? 'English Practice with Ms Mèo' : 'Bài tập tiếng Anh cùng Ms Mèo')
   );
   const [format, setFormat] = useState<LessonFormat>(lessonFormat);
-  const [selectedTask, setSelectedTask] = useState<AssignedTaskType>('listening');
+  const [selectedTask, setSelectedTask] = useState<AssignedTaskType>(defaultAssignedTask);
   const [className, setClassName] = useState('Grade 12');
   const [teacherNotes, setTeacherNotes] = useState(
     isEn
@@ -149,22 +166,58 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
     return nextWeek.toISOString().slice(0, 10);
   });
 
+  const [sentenceCountChoice, setSentenceCountChoice] = useState<SentenceSelectionMode>(initialSentenceChoice);
+  const [customRangeFrom, setCustomRangeFrom] = useState<number>(initialRangeFrom);
+  const [customRangeTo, setCustomRangeTo] = useState<number>(() => initialRangeTo ?? 5);
+  const [cutByTierLength, setCutByTierLength] = useState<boolean>(false);
+
+  const assignmentPreviewData = React.useMemo(() => {
+    return prepareAssignmentTextWithPreview(
+      rawText,
+      sentenceCountChoice,
+      customRangeFrom,
+      customRangeTo,
+      cutByTierLength ? (selectedTier as DifficultyTier) : null
+    );
+  }, [rawText, sentenceCountChoice, customRangeFrom, customRangeTo, cutByTierLength, selectedTier]);
+
+  const totalSentences = assignmentPreviewData.preview.previewRows.length;
+
   const [isLoading, setIsLoading] = useState(false);
   const [createdAssignment, setCreatedAssignment] = useState<Assignment | null>(null);
   const [copiedTaskId, setCopiedTaskId] = useState<string | null>(null);
   const [copiedMain, setCopiedMain] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Sync defaults cleanly every time the modal opens
+  React.useEffect(() => {
+    if (isOpen) {
+      setSelectedTask(defaultAssignedTask || 'all');
+      setFormat(lessonFormat);
+      if (initialTitle) setTitle(initialTitle);
+      setSentenceCountChoice(initialSentenceChoice || 'all');
+      setCustomRangeFrom(initialRangeFrom || 1);
+      setCustomRangeTo(initialRangeTo ?? Math.min(5, Math.max(1, totalSentences)));
+      setCutByTierLength(false);
+      setCreatedAssignment(null);
+      setErrorMsg(null);
+    }
+  }, [
+    isOpen,
+    defaultAssignedTask,
+    lessonFormat,
+    initialTitle,
+    initialSentenceChoice,
+    initialRangeFrom,
+    initialRangeTo,
+    totalSentences,
+  ]);
+
   if (!isOpen) return null;
 
   const getTaskShareUrl = (id: string, taskType?: AssignedTaskType) => {
     if (typeof window === 'undefined') return '';
-    const url = new URL(window.location.origin + window.location.pathname);
-    url.searchParams.set('assignment', id);
-    if (taskType && taskType !== 'all') {
-      url.searchParams.set('task', taskType);
-    }
-    return url.toString();
+    return buildAssignmentShareUrl(window.location.origin + window.location.pathname, id, taskType);
   };
 
   const handleCreateAssignment = async (e: React.FormEvent) => {
@@ -177,10 +230,12 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
     setIsLoading(true);
     setErrorMsg(null);
 
+    const textToAssign = assignmentPreviewData.assignedText;
+
     try {
       const assignment = await createAssignment({
         title: title.trim() || 'Bài tập tiếng Anh Ms Mèo',
-        rawText: rawText.trim(),
+        rawText: textToAssign,
         selectedTier,
         lessonFormat: format,
         className: className.trim(),
@@ -255,13 +310,30 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-2 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-2">
+              {onGoHome && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onGoHome();
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/20 hover:bg-white/30 text-white text-xs font-black transition-all hover:scale-102"
+                  title={isEn ? 'Return to Home' : 'Quay về trang chủ'}
+                >
+                  <Home className="w-4 h-4" />
+                  <span className="hidden sm:inline">{isEn ? 'Home' : 'Trang chủ'}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-2 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
+                title={isEn ? 'Close' : 'Đóng'}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -291,23 +363,31 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
 
               {/* Assignment Overview Pill */}
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs space-y-2">
-                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-                  <span className="font-bold text-slate-700">Tên bài tập:</span>
-                  <span className="font-extrabold text-pink-600 text-sm">{createdAssignment.title}</span>
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200">
+                  <span className="font-bold text-slate-700">
+                    {isEn ? 'Assignment Title:' : 'Tên bài tập:'}
+                  </span>
+                  <span className="font-extrabold text-pink-600 text-sm break-words">{createdAssignment.title}</span>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-slate-600">
+                <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 gap-2 text-slate-600">
                   <div>
-                    <span className="text-slate-400">Định dạng:</span>{' '}
-                    <strong>{createdAssignment.lessonFormat === 'conversation' ? '💬 Hội thoại' : '📄 Đoạn văn'}</strong>
+                    <span className="text-slate-400">{isEn ? 'Format:' : 'Định dạng:'}</span>{' '}
+                    <strong>
+                      {createdAssignment.lessonFormat === 'conversation'
+                        ? isEn ? '💬 Dialogue' : '💬 Hội thoại'
+                        : isEn ? '📄 Passage' : '📄 Đoạn văn'}
+                    </strong>
                   </div>
                   {createdAssignment.className && (
                     <div>
-                      <span className="text-slate-400">Lớp:</span> <strong>{createdAssignment.className}</strong>
+                      <span className="text-slate-400">{isEn ? 'Class:' : 'Lớp:'}</span>{' '}
+                      <strong>{createdAssignment.className}</strong>
                     </div>
                   )}
                   {createdAssignment.dueDate && (
                     <div>
-                      <span className="text-slate-400">Hạn nộp:</span> <strong>{createdAssignment.dueDate}</strong>
+                      <span className="text-slate-400">{isEn ? 'Due:' : 'Hạn nộp:'}</span>{' '}
+                      <strong>{createdAssignment.dueDate}</strong>
                     </div>
                   )}
                 </div>
@@ -315,29 +395,34 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
 
               {/* SECTION: PRIMARY ASSIGNED TASK LINK */}
               <div className="bg-gradient-to-r from-pink-50 via-rose-50 to-amber-50 border-2 border-pink-300 rounded-2xl p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="text-base">⭐</span>
                     <strong className="text-xs font-black text-slate-900 uppercase tracking-wide">
                       {isEn ? 'Primary Assigned Task Link:' : 'Link Nhiệm vụ chính được giao:'}
                     </strong>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-pink-500 text-white">
-                      {AVAILABLE_TASKS.find((t) => t.id === createdAssignment.assignedTask)?.titleVi || 'Luyện nghe Karaoke'}
+                      {(() => {
+                        const found = AVAILABLE_TASKS.find(
+                          (t) => t.id === (createdAssignment.assignedTask || selectedTask)
+                        );
+                        return found ? (isEn ? found.titleEn : found.titleVi) : 'Full Lesson';
+                      })()}
                     </span>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                   <input
                     type="text"
                     readOnly
                     value={getTaskShareUrl(createdAssignment.id, createdAssignment.assignedTask)}
-                    className="w-full text-xs font-mono bg-white border border-pink-300 rounded-xl px-3 py-2 text-slate-800 select-all focus:outline-none"
+                    className="min-w-0 flex-1 text-xs font-mono bg-white border border-pink-300 rounded-xl px-3 py-2 text-slate-800 select-all focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={handleCopyMainLink}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 transition-all ${
+                    className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 transition-all ${
                       copiedMain
                         ? 'bg-emerald-600 text-white'
                         : 'bg-gradient-to-r from-pink-500 to-rose-600 text-white hover:from-pink-600 hover:to-rose-700 shadow-xs'
@@ -346,12 +431,12 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
                     {copiedMain ? (
                       <>
                         <Check className="w-4 h-4" />
-                        <span>Đã chép!</span>
+                        <span>{isEn ? 'Copied!' : 'Đã chép!'}</span>
                       </>
                     ) : (
                       <>
                         <Copy className="w-4 h-4" />
-                        <span>Sao chép link</span>
+                        <span>{isEn ? 'Copy Link' : 'Sao chép link'}</span>
                       </>
                     )}
                   </button>
@@ -467,27 +552,44 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
               </div>
 
               {/* Bottom Nav / Close */}
-              <div className="pt-2 flex flex-wrap items-center justify-between gap-2.5 border-t border-slate-200">
+              <div className="pt-3 flex flex-wrap items-center justify-between gap-2.5 border-t border-slate-200">
                 <button
                   type="button"
                   onClick={() => setCreatedAssignment(null)}
-                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
                 >
-                  ← Tạo bài tập khác
+                  ← {isEn ? 'Assign another task' : 'Tạo bài tập khác'}
                 </button>
 
-                {onOpenAdminDashboard && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onClose();
-                      onOpenAdminDashboard();
-                    }}
-                    className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 transition-all shadow-xs"
-                  >
-                    <span>📊 Xem trang quản lý kết quả học sinh</span>
-                  </button>
-                )}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {onGoHome && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onGoHome();
+                      }}
+                      className="px-4 py-2.5 rounded-xl text-xs font-black text-pink-700 bg-pink-100 hover:bg-pink-200 border border-pink-300 transition-all flex items-center gap-1.5 shadow-2xs hover:scale-102"
+                      title={isEn ? 'Return to Home' : 'Quay về trang chủ'}
+                    >
+                      <Home className="w-4 h-4 text-pink-600" />
+                      <span>{isEn ? '🏠 Return to Home' : '🏠 Quay về trang chủ'}</span>
+                    </button>
+                  )}
+
+                  {onOpenAdminDashboard && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenAdminDashboard();
+                      }}
+                      className="px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 transition-all shadow-xs flex items-center gap-1.5"
+                    >
+                      <span>📊 {isEn ? 'Student Scorecards' : 'Xem trang quản lý kết quả học sinh'}</span>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           ) : (
@@ -549,7 +651,7 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
               {/* 2. Format Selector: Reading Passage vs Conversation */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
-                  <span>Dạng bài học giao cho học sinh:</span>
+                  <span>{isEn ? 'Lesson format:' : 'Dạng bài học giao cho học sinh:'}</span>
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -562,7 +664,7 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
                     }`}
                   >
                     <FileText className="w-3.5 h-3.5" />
-                    <span>📄 Dạng Đoạn văn đọc</span>
+                    <span>{isEn ? '📄 Reading Passage' : '📄 Dạng Đoạn văn đọc'}</span>
                   </button>
                   <button
                     type="button"
@@ -574,22 +676,142 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
                     }`}
                   >
                     <MessageSquare className="w-3.5 h-3.5" />
-                    <span>💬 Dạng Hội thoại (Dialogue)</span>
+                    <span>{isEn ? '💬 Dialogue' : '💬 Dạng Hội thoại'}</span>
                   </button>
                 </div>
               </div>
 
-              {/* 3. Assignment Title */}
+              {/* 3. SELECT NUMBER OF SENTENCES (TỰ CHỌN SỐ CÂU GIAO BÀI) */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                <label className="block text-xs font-black text-slate-800 flex items-center justify-between gap-2 flex-wrap">
+                  <span className="flex items-center gap-1.5">
+                    <span>🔢</span>
+                    <span>{isEn ? 'Choose Sentence Count to Assign:' : 'Tự chọn số câu giao cho học sinh:'}</span>
+                  </span>
+                  <span className="text-[11px] text-pink-600 font-extrabold">
+                    {totalSentences} {isEn ? 'sentences in passage' : 'câu trong văn bản'}
+                  </span>
+                </label>
+
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setSentenceCountChoice('all')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                      sentenceCountChoice === 'all'
+                        ? 'bg-rose-500 text-white border-rose-500 shadow-xs font-black'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {isEn ? `All (${totalSentences})` : `Tất cả (${totalSentences} câu)`}
+                  </button>
+
+                  {totalSentences >= 3 && (
+                    <button
+                      type="button"
+                      onClick={() => setSentenceCountChoice('3')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                        sentenceCountChoice === '3'
+                          ? 'bg-rose-500 text-white border-rose-500 shadow-xs font-black'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      {isEn ? 'First 3' : '3 câu đầu'}
+                    </button>
+                  )}
+
+                  {totalSentences >= 5 && (
+                    <button
+                      type="button"
+                      onClick={() => setSentenceCountChoice('5')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                        sentenceCountChoice === '5'
+                          ? 'bg-rose-500 text-white border-rose-500 shadow-xs font-black'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      {isEn ? 'First 5' : '5 câu đầu'}
+                    </button>
+                  )}
+
+                  {totalSentences >= 10 && (
+                    <button
+                      type="button"
+                      onClick={() => setSentenceCountChoice('10')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                        sentenceCountChoice === '10'
+                          ? 'bg-rose-500 text-white border-rose-500 shadow-xs font-black'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      {isEn ? 'First 10' : '10 câu đầu'}
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setSentenceCountChoice('custom')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1 ${
+                      sentenceCountChoice === 'custom'
+                        ? 'bg-amber-400 text-slate-900 border-amber-400 font-black shadow-xs ring-2 ring-amber-300'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span>⚙️</span>
+                    <span>{isEn ? 'Custom range...' : 'Tự chọn khoảng câu...'}</span>
+                  </button>
+                </div>
+
+                {sentenceCountChoice === 'custom' && (
+                  <div className="mt-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200 flex items-center gap-3 text-xs flex-wrap animate-fadeIn">
+                    <span className="font-bold text-slate-800">{isEn ? 'From #:' : 'Từ câu:'}</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={totalSentences}
+                      value={customRangeFrom}
+                      onChange={(e) => setCustomRangeFrom(Math.max(1, Math.min(totalSentences, parseInt(e.target.value) || 1)))}
+                      className="w-16 px-2 py-1 text-center font-bold bg-white border border-slate-300 rounded-lg text-slate-900"
+                    />
+                    <span className="font-bold text-slate-800">{isEn ? 'To #:' : 'Đến câu:'}</span>
+                    <input
+                      type="number"
+                      min={customRangeFrom}
+                      max={totalSentences}
+                      value={customRangeTo}
+                      onChange={(e) => setCustomRangeTo(Math.max(customRangeFrom, Math.min(totalSentences, parseInt(e.target.value) || customRangeFrom)))}
+                      className="w-16 px-2 py-1 text-center font-bold bg-white border border-slate-300 rounded-lg text-slate-900"
+                    />
+                    <span className="text-amber-900 font-extrabold">
+                      ({isEn
+                        ? `Assigning ${assignmentPreviewData.preview.keptSentences.length} sentences`
+                        : `Sẽ giao ${assignmentPreviewData.preview.keptSentences.length} câu cho học sinh`})
+                    </span>
+                  </div>
+                )}
+
+                {/* Sentence Keep / Drop Preview Table */}
+                <div className="pt-1">
+                  <SentenceCutPreviewTable
+                    previewRows={assignmentPreviewData.preview.previewRows}
+                    language={language}
+                    defaultExpanded={assignmentPreviewData.preview.hasCuts}
+                    compact
+                  />
+                </div>
+              </div>
+
+              {/* 4. Assignment Title */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Tiêu đề bài tập <span className="text-rose-500">*</span>
+                  {isEn ? 'Assignment Title' : 'Tiêu đề bài tập'} <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Ví dụ: Luyện phát âm & Đọc hiểu Unit 5..."
+                  placeholder={isEn ? 'e.g. Unit 5 Reading & Shadowing...' : 'Ví dụ: Luyện phát âm & Đọc hiểu Unit 5...'}
                   className="w-full text-xs border border-slate-300 focus:border-pink-500 focus:ring-1 focus:ring-pink-500 rounded-xl px-3 py-2"
                 />
               </div>
@@ -599,13 +821,13 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
                     <Users className="w-3.5 h-3.5 text-teal-600" />
-                    <span>Lớp học / Nhóm:</span>
+                    <span>{isEn ? 'Class / Group:' : 'Lớp học / Nhóm:'}</span>
                   </label>
                   <input
                     type="text"
                     value={className}
                     onChange={(e) => setClassName(e.target.value)}
-                    placeholder="Ví dụ: 10A1, 11B2, 12A3..."
+                    placeholder="e.g. 10A1, 11B2, 12A3..."
                     className="w-full text-xs border border-slate-300 focus:border-pink-500 rounded-xl px-3 py-2"
                   />
                 </div>
@@ -613,7 +835,7 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
                     <Calendar className="w-3.5 h-3.5 text-teal-600" />
-                    <span>Hạn nộp bài (Tùy chọn):</span>
+                    <span>{isEn ? 'Due Date (Optional):' : 'Hạn nộp bài (Tùy chọn):'}</span>
                   </label>
                   <input
                     type="date"
@@ -628,13 +850,13 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
                   <MessageSquare className="w-3.5 h-3.5 text-teal-600" />
-                  <span>Lời dặn / Yêu cầu của Giáo viên:</span>
+                  <span>{isEn ? 'Teacher Notes / Instructions:' : 'Lời dặn / Yêu cầu của Giáo viên:'}</span>
                 </label>
                 <textarea
                   rows={2}
                   value={teacherNotes}
                   onChange={(e) => setTeacherNotes(e.target.value)}
-                  placeholder="Ghi chú yêu cầu học sinh làm những phần nào..."
+                  placeholder={isEn ? 'Instructions for your students...' : 'Ghi chú yêu cầu học sinh làm những phần nào...'}
                   className="w-full text-xs border border-slate-300 focus:border-pink-500 rounded-xl p-2.5 resize-none"
                 />
               </div>
@@ -643,21 +865,21 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1 flex items-center gap-1">
                   <BookOpen className="w-3.5 h-3.5" />
-                  <span>Nội dung bài học (Trích đoạn):</span>
+                  <span>{isEn ? 'Lesson Excerpt:' : 'Nội dung bài học (Trích đoạn):'}</span>
                 </label>
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 max-h-20 overflow-y-auto text-xs text-slate-600 leading-relaxed italic">
-                  "{rawText.slice(0, 240)}..."
+                  &ldquo;{rawText.slice(0, 240)}...&rdquo;
                 </div>
               </div>
 
               {/* Submit Button */}
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-3">
+              <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-end gap-3">
                 <button
                   type="button"
                   onClick={onClose}
                   className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
                 >
-                  Hủy bỏ
+                  {isEn ? 'Cancel' : 'Hủy bỏ'}
                 </button>
                 <button
                   type="submit"
@@ -665,11 +887,11 @@ export const AssignLessonModal: React.FC<AssignLessonModalProps> = ({
                   className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-500 via-teal-600 to-emerald-600 hover:from-emerald-600 hover:to-teal-700 shadow-md transition-all hover:scale-102 flex items-center gap-2 disabled:opacity-50"
                 >
                   {isLoading ? (
-                    <span>Đang tạo link...</span>
+                    <span>{isEn ? 'Generating links...' : 'Đang tạo link...'}</span>
                   ) : (
                     <>
                       <Send className="w-3.5 h-3.5" />
-                      <span>🚀 Tạo link riêng cho các nhiệm vụ</span>
+                      <span>{isEn ? '🚀 Generate Task Links' : '🚀 Tạo link riêng cho các nhiệm vụ'}</span>
                     </>
                   )}
                 </button>

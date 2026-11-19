@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CheckCircle2, XCircle, HelpCircle, Award, RefreshCw, ChevronRight } from 'lucide-react';
 import { QuizQuestion } from '../types';
 import { playSuccessChime, playErrorTone, playSoftTone } from '../utils/audio';
@@ -6,16 +6,24 @@ import { playSuccessChime, playErrorTone, playSoftTone } from '../utils/audio';
 interface TaskComprehensionQuizProps {
   questions: QuizQuestion[];
   soundEnabled: boolean;
+  language?: 'en' | 'vi';
   onQuizProgress?: (correctCount: number, total: number) => void;
 }
 
 export const TaskComprehensionQuiz: React.FC<TaskComprehensionQuizProps> = ({
   questions,
   soundEnabled,
+  language = 'vi',
   onQuizProgress,
 }) => {
+  const isEn = language === 'en';
   // Store user answer index for each question
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number>>({});
+
+  const questionsSignature = questions.map((q) => `${q.id}:${q.question}`).join('|');
+  useEffect(() => {
+    setSelectedAnswers({});
+  }, [questionsSignature]);
 
   const handleSelectOption = (question: QuizQuestion, optionIndex: number) => {
     // If already answered, allow reselection or keep choice
@@ -53,19 +61,21 @@ export const TaskComprehensionQuiz: React.FC<TaskComprehensionQuizProps> = ({
   const isAllAnswered = answeredCount === questions.length;
 
   return (
-    <div className="bg-white rounded-3xl p-6 sm:p-8 border border-pink-200 shadow-sm space-y-6">
+    <div className="bg-white rounded-3xl p-4 sm:p-8 border border-pink-200 shadow-sm space-y-6">
       {/* Quiz Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-pink-100">
         <div>
           <span className="text-xs font-bold text-pink-600 bg-pink-50 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-            TASK 2 • QUICK QUIZ
+            {isEn ? 'TASK 2 • QUICK QUIZ' : 'NHIỆM VỤ 2 • TRẮC NGHIỆM ĐỌC HIỂU'}
           </span>
           <h3 className="font-heading text-lg sm:text-xl font-bold text-slate-800 mt-1 flex items-center gap-2">
             <span>✨</span>
-            <span>Quiz: Quick Knowledge Check</span>
+            <span>{isEn ? 'Quiz: Quick Knowledge Check' : 'Trắc nghiệm kiểm tra đọc hiểu'}</span>
           </h3>
           <p className="text-xs sm:text-sm text-slate-500">
-            Simple, bite-sized questions with single words, short phrases, or numbers
+            {isEn
+              ? 'Simple, bite-sized questions with single words, short phrases, or numbers'
+              : 'Câu hỏi ngắn gọn bám sát chi tiết, từ vựng và ý chính trong đoạn văn'}
           </p>
         </div>
 
@@ -73,7 +83,7 @@ export const TaskComprehensionQuiz: React.FC<TaskComprehensionQuizProps> = ({
         <div className="flex items-center gap-3">
           <div className="bg-pink-50 border border-pink-200 rounded-2xl px-4 py-2 text-center">
             <span className="text-xs font-semibold text-slate-500 block">
-              Quiz Score
+              {isEn ? 'Quiz Score' : 'Điểm Quiz'}
             </span>
             <span className="font-heading font-extrabold text-lg text-pink-600">
               {correctCount} / {questions.length}
@@ -85,24 +95,36 @@ export const TaskComprehensionQuiz: React.FC<TaskComprehensionQuizProps> = ({
       {/* Completion Banner */}
       {isAllAnswered && (
         <div
-          className={`p-4 rounded-2xl border flex items-center justify-between gap-3 ${
+          className={`p-4 rounded-2xl border flex flex-wrap items-center justify-between gap-3 ${
             correctCount === questions.length
               ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : correctCount === 0
+              ? 'bg-rose-50 border-rose-200 text-rose-900'
               : 'bg-amber-50 border-amber-200 text-amber-900'
           }`}
         >
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-white shadow-xs">
+            <div className="p-2 rounded-xl bg-white shadow-xs shrink-0">
               <Award className="w-5 h-5 text-pink-600" />
             </div>
             <div>
               <h4 className="font-heading font-bold text-sm">
                 {correctCount === questions.length
-                  ? '🐾 100% Score! Purr-fect Reading Mastery!'
-                  : `Good Effort! You got ${correctCount} out of ${questions.length} correct.`}
+                  ? isEn
+                    ? '🐾 100% Score! Purr-fect Reading Mastery!'
+                    : '🐾 Đạt 100%! Nắm chắc hoàn toàn bài đọc!'
+                  : correctCount === 0
+                  ? isEn
+                    ? `0/${questions.length} correct — Review the passage and try again!`
+                    : `0/${questions.length} câu đúng — Xem lại giải thích bên dưới và làm lại nhé!`
+                  : isEn
+                  ? `You got ${correctCount} out of ${questions.length} correct.`
+                  : `Bạn làm đúng ${correctCount} / ${questions.length} câu.`}
               </h4>
               <p className="text-xs opacity-90">
-                Check Ms Mèo's explanation cards below to solidify your reading context.
+                {isEn
+                  ? "Check Ms Mèo's explanation cards below to solidify your reading context."
+                  : 'Đọc phần giải thích của Ms Mèo ở từng câu để củng cố ngữ cảnh.'}
               </p>
             </div>
           </div>
@@ -113,7 +135,7 @@ export const TaskComprehensionQuiz: React.FC<TaskComprehensionQuizProps> = ({
             className="px-3 py-1.5 rounded-xl text-xs font-bold bg-white text-slate-700 hover:bg-slate-50 shadow-xs border border-slate-200 flex items-center gap-1.5"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            <span>Try Again</span>
+            <span>{isEn ? 'Try Again' : 'Làm lại'}</span>
           </button>
         </div>
       )}
@@ -141,7 +163,7 @@ export const TaskComprehensionQuiz: React.FC<TaskComprehensionQuizProps> = ({
               </div>
 
               {/* 4 Options */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+              <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
                 {q.options.map((opt, optIdx) => {
                   const letter = String.fromCharCode(65 + optIdx); // A, B, C, D
                   const isThisSelected = userChoice === optIdx;
@@ -201,7 +223,9 @@ export const TaskComprehensionQuiz: React.FC<TaskComprehensionQuizProps> = ({
                   <span className="text-xl">🐱</span>
                   <div className="flex-1 text-xs sm:text-sm">
                     <p className="font-bold mb-0.5">
-                      {isCorrect ? 'Correct! High Paw! 🐾' : 'Keep Learning! 🐾'}
+                      {isCorrect
+                        ? isEn ? 'Correct! High Paw! 🐾' : 'Chính xác! Tuyệt vời! 🐾'
+                        : isEn ? 'Keep Learning! 🐾' : 'Chưa đúng — xem gợi ý nhé! 🐾'}
                     </p>
                     <p className="text-slate-700 leading-relaxed">
                       {q.explanation}

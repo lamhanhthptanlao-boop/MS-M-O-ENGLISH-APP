@@ -20,6 +20,7 @@ interface BadgesModalProps {
   isOpen: boolean;
   onClose: () => void;
   unlockedBadges: UnlockedBadge[];
+  language?: 'en' | 'vi';
   onResetBadges?: () => void;
   onNavigateToTab?: (tab: 'shadowing' | 'words' | 'quiz' | 'dictation' | 'chatbot') => void;
 }
@@ -28,9 +29,11 @@ export const BadgesModal: React.FC<BadgesModalProps> = ({
   isOpen,
   onClose,
   unlockedBadges,
+  language = 'vi',
   onResetBadges,
   onNavigateToTab,
 }) => {
+  const isEn = language === 'en';
   const [filter, setFilter] = useState<'all' | 'unlocked' | 'locked'>('all');
   const [selectedBadge, setSelectedBadge] = useState<BadgeDefinition | null>(null);
 
@@ -76,10 +79,12 @@ export const BadgesModal: React.FC<BadgesModalProps> = ({
                   <span>🐱 Ms Mèo's Trophy Room</span>
                 </div>
                 <h2 className="font-heading text-xl sm:text-2xl font-extrabold tracking-tight mt-0.5">
-                  Badges & Achievements
+                  {isEn ? 'Badges & Achievements' : 'Huy hiệu & Thành tích'}
                 </h2>
                 <p className="text-xs text-pink-100 hidden sm:block">
-                  Huy hiệu & Thành tích học tập tiếng Anh dễ thương cùng cô giáo Ms Mèo
+                  {isEn
+                    ? 'Collect cute English practice achievements together with Ms Mèo!'
+                    : 'Huy hiệu & Thành tích học tập tiếng Anh dễ thương cùng cô giáo Ms Mèo'}
                 </p>
               </div>
             </div>
@@ -98,13 +103,13 @@ export const BadgesModal: React.FC<BadgesModalProps> = ({
           <div className="mt-4 pt-3 border-t border-white/20 relative z-10">
             <div className="flex items-center justify-between text-xs font-bold mb-1.5">
               <span className="flex items-center gap-1.5">
-                <span>⭐ Tiến độ mở khóa huy hiệu:</span>
+                <span>{isEn ? '⭐ Unlock progress:' : '⭐ Tiến độ mở khóa huy hiệu:'}</span>
                 <span className="text-amber-200 font-extrabold text-sm">
                   {unlockedCount} / {totalCount}
                 </span>
               </span>
               <span className="bg-white/20 px-2 py-0.5 rounded-full text-[11px]">
-                {progressPercent}% Hoàn thành
+                {progressPercent}% {isEn ? 'Complete' : 'Hoàn thành'}
               </span>
             </div>
             <div className="w-full h-3 bg-black/20 rounded-full overflow-hidden p-0.5 border border-white/20">
@@ -120,8 +125,8 @@ export const BadgesModal: React.FC<BadgesModalProps> = ({
         </div>
 
         {/* Filters and Navigation Tabs */}
-        <div className="px-5 py-3 border-b border-pink-100 bg-pink-50/50 flex flex-wrap items-center justify-between gap-2.5 shrink-0">
-          <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-pink-200 text-xs shadow-2xs">
+        <div className="px-4 sm:px-5 py-3 border-b border-pink-100 bg-pink-50/50 flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+          <div className="flex flex-wrap items-center gap-1 bg-white p-1 rounded-xl border border-pink-200 text-xs shadow-2xs">
             <button
               type="button"
               onClick={() => setFilter('all')}
@@ -131,7 +136,7 @@ export const BadgesModal: React.FC<BadgesModalProps> = ({
                   : 'text-slate-600 hover:text-pink-600'
               }`}
             >
-              Tất cả ({totalCount})
+              {isEn ? `All (${totalCount})` : `Tất cả (${totalCount})`}
             </button>
             <button
               type="button"
@@ -142,7 +147,7 @@ export const BadgesModal: React.FC<BadgesModalProps> = ({
                   : 'text-slate-600 hover:text-emerald-600'
               }`}
             >
-              Đã mở khóa ({unlockedCount})
+              {isEn ? `Unlocked (${unlockedCount})` : `Đã mở (${unlockedCount})`}
             </button>
             <button
               type="button"
@@ -153,12 +158,16 @@ export const BadgesModal: React.FC<BadgesModalProps> = ({
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Chưa mở khóa ({totalCount - unlockedCount})
+              {isEn ? `Locked (${totalCount - unlockedCount})` : `Chưa mở (${totalCount - unlockedCount})`}
             </button>
           </div>
 
           <div className="text-[11px] text-slate-500 flex items-center gap-1 font-medium">
-            <span>💡 Bấm vào từng huy hiệu để xem lời khen của Ms Mèo!</span>
+            <span>
+              {isEn
+                ? '💡 Tap any badge to read Ms Mèo’s note!'
+                : '💡 Bấm vào từng huy hiệu để xem lời khen của Ms Mèo!'}
+            </span>
           </div>
         </div>
 
@@ -196,12 +205,12 @@ export const BadgesModal: React.FC<BadgesModalProps> = ({
                         {isUnlocked ? (
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs">
                             <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                            <span>Đã đạt được!</span>
+                            <span>{isEn ? 'Unlocked!' : 'Đã đạt được!'}</span>
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-600 border border-slate-300">
                             <Lock className="w-3 h-3 text-slate-500" />
-                            <span>Chưa mở</span>
+                            <span>{isEn ? 'Locked' : 'Chưa mở'}</span>
                           </span>
                         )}
 
@@ -233,16 +242,19 @@ export const BadgesModal: React.FC<BadgesModalProps> = ({
                   <div className="mt-3 pt-2.5 border-t border-slate-100">
                     {isUnlocked ? (
                       <div className="text-[11px] text-emerald-800 bg-emerald-50/70 p-2 rounded-xl border border-emerald-200">
-                        <p className="font-semibold italic">"{badge.catPraise}"</p>
+                        <p className="font-semibold italic">&ldquo;{badge.catPraise}&rdquo;</p>
                         {unlockedTime && (
                           <p className="text-[10px] text-slate-400 mt-1">
-                            📅 Mở khóa: {new Date(unlockedTime).toLocaleDateString('vi-VN')}
+                            📅 {isEn ? 'Unlocked:' : 'Mở khóa:'}{' '}
+                            {new Date(unlockedTime).toLocaleDateString(isEn ? 'en-US' : 'vi-VN')}
                           </p>
                         )}
                       </div>
                     ) : (
                       <div className="text-[11px] text-slate-500 bg-white/70 p-2 rounded-xl border border-slate-200">
-                        <span className="font-bold text-slate-700">🎯 Cách nhận:</span>{' '}
+                        <span className="font-bold text-slate-700">
+                          {isEn ? '🎯 How to earn:' : '🎯 Cách nhận:'}
+                        </span>{' '}
                         <span>{badge.requirementHint}</span>
                       </div>
                     )}
@@ -254,9 +266,13 @@ export const BadgesModal: React.FC<BadgesModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="px-5 py-3.5 bg-slate-50 border-t border-pink-100 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+        <div className="px-4 sm:px-5 py-3.5 bg-slate-50 border-t border-pink-100 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2 text-xs text-slate-500">
-            <span>🐾 Học đều đặn mỗi ngày để sưu tầm trọn bộ 10 huy hiệu Ms Mèo!</span>
+            <span>
+              {isEn
+                ? '🐾 Practice daily to collect all 10 Ms Mèo badges!'
+                : '🐾 Học đều đặn mỗi ngày để sưu tầm trọn bộ 10 huy hiệu Ms Mèo!'}
+            </span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -264,15 +280,18 @@ export const BadgesModal: React.FC<BadgesModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  if (confirm('Bạn có chắc muốn đặt lại toàn bộ huy hiệu để thử thách mở khóa từ đầu?')) {
+                  const msg = isEn
+                    ? 'Reset all badges and start unlocking from scratch?'
+                    : 'Bạn có chắc muốn đặt lại toàn bộ huy hiệu để thử thách mở khóa từ đầu?';
+                  if (confirm(msg)) {
                     onResetBadges();
                   }
                 }}
                 className="text-xs text-slate-400 hover:text-rose-600 px-2 py-1 rounded-lg hover:bg-rose-50 transition-colors flex items-center gap-1"
-                title="Đặt lại huy hiệu (dành cho thử nghiệm)"
+                title={isEn ? 'Reset badges' : 'Đặt lại huy hiệu'}
               >
                 <RotateCcw className="w-3 h-3" />
-                <span>Đặt lại</span>
+                <span>{isEn ? 'Reset' : 'Đặt lại'}</span>
               </button>
             )}
 
@@ -281,7 +300,7 @@ export const BadgesModal: React.FC<BadgesModalProps> = ({
               onClick={onClose}
               className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 shadow-xs transition-all hover:scale-102"
             >
-              Tiếp tục học bài
+              {isEn ? 'Keep Practicing' : 'Tiếp tục học bài'}
             </button>
           </div>
         </div>

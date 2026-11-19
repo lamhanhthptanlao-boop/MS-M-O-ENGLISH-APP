@@ -40,6 +40,9 @@ interface HeaderProps {
   onToggleStudentPreview?: () => void;
   activeAssignment?: Assignment | null;
   assignedTaskType?: AssignedTaskType;
+  totalXp?: number;
+  streakDays?: number;
+  onOpenLeaderboard?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -66,9 +69,12 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleStudentPreview,
   activeAssignment = null,
   assignedTaskType,
+  totalXp = 0,
+  streakDays = 0,
+  onOpenLeaderboard,
 }) => {
-  const isEn = language === 'en' || isStudentMode;
-  const isLockedTask = !!activeAssignment && assignedTaskType !== 'all';
+  const isEn = language === 'en';
+  const isLockedTask = !!activeAssignment;
 
   const getTaskLabel = (task?: AssignedTaskType) => {
     switch (task) {
@@ -91,34 +97,32 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-pink-100 shadow-xs">
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-3">
-        {/* Zone 1: Logo & Brand Lockup (Clicking returns Home only if not locked in assignment) */}
+      <div className="max-w-7xl mx-auto px-2.5 sm:px-6 h-16 flex items-center justify-between gap-2 min-w-0">
+        {/* Zone 1: Logo & Brand Lockup (Clicking returns Home) */}
         <button
           type="button"
-          onClick={isLockedTask ? undefined : onGoHome}
-          className={`flex items-center gap-2.5 text-left shrink-0 group focus:outline-none ${
-            isLockedTask ? 'cursor-default' : 'cursor-pointer'
-          }`}
-          title={isLockedTask ? (isEn ? 'Assigned Task' : 'Nhiệm vụ được giao') : (isEn ? 'Home' : 'Trang chủ')}
+          onClick={onGoHome}
+          className="flex items-center gap-2 text-left shrink-0 group focus:outline-none cursor-pointer min-w-0"
+          title={isEn ? 'Ms Mèo English Home' : 'Ms Mèo English - Về Trang chủ'}
         >
-          <div className="relative">
+          <div className="relative shrink-0">
             <img
               src={mascotImg}
               alt="Ms Mèo Mascot"
               referrerPolicy="no-referrer"
-              className="w-10 h-10 rounded-full border-2 border-pink-300 object-cover shadow-sm transition-transform group-hover:scale-105"
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-pink-300 object-cover shadow-sm transition-transform group-hover:scale-105"
             />
             <span className="absolute -bottom-1 -right-1 text-xs">{isLockedTask ? '🔒' : '🎓'}</span>
           </div>
-          <div>
-            <span className="font-heading text-base sm:text-lg font-bold tracking-tight text-slate-800 flex items-center gap-1.5">
-              <span>Ms Mèo English</span>
-              <span className={`text-[10px] font-bold px-2 py-0.2 rounded-full border uppercase tracking-wider ${
+          <div className="min-w-0">
+            <span className="font-heading text-sm sm:text-lg font-bold tracking-tight text-slate-800 flex items-center gap-1">
+              <span className="truncate">Ms Mèo English</span>
+              <span className={`hidden xs:inline-block text-[10px] font-bold px-1.5 py-0.2 rounded-full border uppercase tracking-wider shrink-0 ${
                 isLockedTask
                   ? 'bg-amber-50 text-amber-800 border-amber-300'
                   : 'bg-pink-50 text-pink-600 border-pink-200'
               }`}>
-                {isLockedTask ? (isEn ? 'Assigned' : 'Bài tập') : (isStudentMode ? 'Student' : 'Lab')}
+                {isLockedTask ? (isEn ? 'Assigned' : 'Bài tập') : (isStudentMode ? (isEn ? 'Student' : 'Học sinh') : 'Lab')}
               </span>
             </span>
             <p className="text-[11px] text-slate-400 hidden lg:block -mt-0.5">
@@ -130,7 +134,7 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         {/* Zone 2: Navigation Buttons (Starting with HOME, followed by standalone buttons) */}
-        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto py-1">
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto py-1 min-w-0">
           {/* If Student is in LOCKED task mode, ONLY show the assigned task badge and submit button! */}
           {isLockedTask ? (
             <div className="flex items-center gap-2 shrink-0">
@@ -173,7 +177,7 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
 
               {isStudentMode ? (
-                /* Student Mode Navigation Buttons (100% in English) */
+                /* Student Mode Navigation Buttons (respects VI/EN toggle!) */
                 <>
                   {/* Practice Button */}
                   <button
@@ -184,118 +188,21 @@ export const Header: React.FC<HeaderProps> = ({
                         ? 'bg-indigo-600 text-white font-extrabold ring-2 ring-indigo-200 shadow-xs'
                         : 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200'
                     }`}
-                    title="Practice Lab"
+                    title={isEn ? 'Practice Lab' : 'Phòng luyện tập'}
                   >
                     <span>🚀</span>
-                    <span>Practice</span>
+                    <span>{isEn ? 'Practice' : 'Luyện tập'}</span>
                   </button>
 
-                  {/* Direct Tab Switches when in Practice */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onOpenPractice();
-                      onSelectTab('listening');
-                    }}
-                    className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                      currentView === 'practice' && activeTab === 'listening'
-                        ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
-                        : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span>🎧</span>
-                    <span>Listening</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onOpenPractice();
-                      onSelectTab('shadowing');
-                    }}
-                    className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                      currentView === 'practice' && activeTab === 'shadowing'
-                        ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
-                        : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span>🎙️</span>
-                    <span>Shadowing</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onOpenPractice();
-                      onSelectTab('words');
-                    }}
-                    className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                      currentView === 'practice' && activeTab === 'words'
-                        ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
-                        : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span>🔍</span>
-                    <span>Task 1</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onOpenPractice();
-                      onSelectTab('quiz');
-                    }}
-                    className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                      currentView === 'practice' && activeTab === 'quiz'
-                        ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
-                        : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span>📝</span>
-                    <span>Task 2</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onOpenPractice();
-                      onSelectTab('dictation');
-                    }}
-                    className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                      currentView === 'practice' && activeTab === 'dictation'
-                        ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
-                        : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span>🎧</span>
-                    <span>Task 3</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onOpenPractice();
-                      onSelectTab('chatbot');
-                    }}
-                    className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                      currentView === 'practice' && activeTab === 'chatbot'
-                        ? 'bg-pink-100 text-pink-700 border border-pink-300 shadow-2xs font-extrabold'
-                        : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span>🐱</span>
-                    <span>Ms Mèo Chat</span>
-                  </button>
-
-                  {/* Submit Homework Button (English) */}
+                  {/* Submit Homework Button */}
                   {onOpenSubmitModal && (
                     <button
                       type="button"
                       onClick={onOpenSubmitModal}
-                      className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-extrabold text-slate-900 bg-amber-400 hover:bg-amber-300 rounded-xl shadow-xs transition-all hover:scale-102 ring-2 ring-amber-200 shrink-0"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-extrabold text-slate-900 bg-amber-400 hover:bg-amber-300 rounded-xl shadow-xs transition-all hover:scale-102 ring-2 ring-amber-200 shrink-0"
                     >
                       <Send className="w-3.5 h-3.5 text-slate-900" />
-                      <span>📤 Submit Homework</span>
+                      <span>{isEn ? 'Submit' : 'Nộp bài'}</span>
                     </button>
                   )}
                 </>
@@ -466,7 +373,11 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   type="button"
                   onClick={onToggleStudentPreview}
-                  title={isStudentPreview ? 'Switch back to Teacher View' : 'Preview Student Experience'}
+                  title={
+                    isStudentPreview
+                      ? isEn ? 'Switch back to Teacher View' : 'Quay lại giao diện Giáo viên'
+                      : isEn ? 'Preview Student Experience' : 'Xem thử giao diện Học sinh'
+                  }
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold rounded-xl transition-all shadow-2xs shrink-0 ${
                     isStudentPreview
                       ? 'bg-purple-600 text-white ring-2 ring-purple-200'
@@ -474,13 +385,35 @@ export const Header: React.FC<HeaderProps> = ({
                   }`}
                 >
                   <Eye className="w-3.5 h-3.5" />
-                  <span className="hidden lg:inline">{isStudentPreview ? 'Teacher View' : 'Student View'}</span>
+                  <span className="hidden lg:inline">
+                    {isStudentPreview
+                      ? isEn ? 'Teacher View' : 'Giao diện GV'
+                      : isEn ? 'Student View' : 'Giao diện HS'}
+                  </span>
                 </button>
               )}
             </>
           )}
         </>
       )}
+
+          {/* XP / Streak / Leaderboard Button */}
+          {onOpenLeaderboard && (
+            <button
+              type="button"
+              onClick={onOpenLeaderboard}
+              title={isEn ? 'XP, Streak & Leaderboard' : 'XP, Chuỗi ngày & Bảng xếp hạng'}
+              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl transition-all shadow-2xs shrink-0"
+            >
+              <Trophy className="w-3.5 h-3.5 text-amber-500" />
+              <span>{totalXp} XP</span>
+              {streakDays > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-orange-500 text-white text-[10px] font-extrabold">
+                  🔥{streakDays}
+                </span>
+              )}
+            </button>
+          )}
 
           {/* 7. HUY HIỆU (BADGES) BUTTON */}
           {onOpenBadges && (

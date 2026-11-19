@@ -23,7 +23,7 @@ export async function createAssignment(payload: {
     className: (payload.className || '').trim(),
     teacherNotes: (payload.teacherNotes || '').trim(),
     dueDate: (payload.dueDate || '').trim(),
-    assignedTask: payload.assignedTask || 'listening',
+    assignedTask: payload.assignedTask || 'all',
     createdAt: new Date().toISOString(),
     submissionCount: 0,
   };
@@ -101,6 +101,11 @@ export async function submitAssignmentResult(
     taskType?: 'listening' | 'shadowing' | 'words' | 'quiz' | 'dictation' | 'chat' | 'all';
     listeningCompleted?: boolean;
     listeningDurationSeconds?: number;
+    voiceCount?: number;
+    voiceAvgScore?: number;
+    typingMatchCount?: number;
+    typingMatchScore?: number;
+    dictationCount?: number;
     shadowingCount?: number;
     shadowingAvgScore?: number;
     quizScore?: number;
@@ -111,6 +116,12 @@ export async function submitAssignmentResult(
     studentNote?: string;
   }
 ): Promise<AssignmentSubmission> {
+  const voiceCount = payload.voiceCount ?? payload.shadowingCount ?? 0;
+  const voiceAvgScore = payload.voiceAvgScore ?? payload.shadowingAvgScore ?? 0;
+  const typingMatchCount = payload.typingMatchCount ?? 0;
+  const typingMatchScore = payload.typingMatchScore ?? 0;
+  const dictationCount = payload.dictationCount ?? 0;
+
   const localSubmission: AssignmentSubmission = {
     id: `sub_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     assignmentId,
@@ -119,8 +130,13 @@ export async function submitAssignmentResult(
     taskType: payload.taskType || 'listening',
     listeningCompleted: payload.listeningCompleted ?? false,
     listeningDurationSeconds: payload.listeningDurationSeconds ?? 0,
-    shadowingCount: payload.shadowingCount ?? 0,
-    shadowingAvgScore: payload.shadowingAvgScore ?? 0,
+    voiceCount,
+    voiceAvgScore,
+    typingMatchCount,
+    typingMatchScore,
+    dictationCount,
+    shadowingCount: voiceCount,
+    shadowingAvgScore: voiceAvgScore,
     quizScore: payload.quizScore ?? 0,
     quizCorrectCount: payload.quizCorrectCount ?? 0,
     quizTotal: payload.quizTotal ?? 0,

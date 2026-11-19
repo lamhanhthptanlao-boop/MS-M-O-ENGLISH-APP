@@ -24,11 +24,27 @@ import {
   ChevronUp,
   Gauge,
   Zap,
+  ListFilter,
+  Hash,
 } from 'lucide-react';
 import { Assignment, AnalyzedSentence, VoiceSettings, NativeAccent } from '../types';
-import { ttsController, resolveSelectedVoice, filterVoices, stripSpeakerTags } from '../utils/speech';
+import {
+  ttsController,
+  resolveSelectedVoice,
+  filterVoices,
+  stripSpeakerTags,
+  findStrictDeviceVoiceForSpec,
+  getMatchingRecommendedSpecs,
+} from '../utils/speech';
 import { playSuccessChime, playSoftTone, playPurr } from '../utils/audio';
 import { submitAssignmentResult } from '../storage/assignments';
+import {
+  computeListeningCompletion,
+  createListeningProgressState,
+  LISTENING_COMPLETION_THRESHOLD,
+  ListeningProgressState,
+  updateSentenceListeningRatio,
+} from '../utils/listeningProgress';
 import mascotImg from '../assets/images/ms_meo_mascot_1790341757214.jpg';
 
 export interface KaraokeWordToken {
@@ -160,9 +176,53 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
 
   const [showBilingualSub, setShowBilingualSub] = useState<boolean>(false);
 
-  // Track listened sentences for completion
-  const [listenedSentenceIds, setListenedSentenceIds] = useState<Set<string>>(new Set());
+  // Dedicated sentence selection / filtering state ("Tự chọn số câu")
+  const [sentenceSelectionMode, setSentenceSelectionMode] = useState<'all' | '3' | '5' | '10' | 'custom'>('all');
+  const [customRangeFrom, setCustomRangeFrom] = useState<number>(1);
+  const [customRangeTo, setCustomRangeTo] = useState<number>(() => Math.min(5, sentences.length || 1));
+  const [showCustomRangeBox, setShowCustomRangeBox] = useState<boolean>(false);
+
+  // Computed active sentences subset for karaoke playback
+  const activeSentences = useMemo(() => {
+    if (!sentences || sentences.length === 0) return [];
+    if (sentenceSelectionMode === 'all') return sentences;
+    if (sentenceSelectionMode === '3') return sentences.slice(0, Math.min(3, sentences.length));
+    if (sentenceSelectionMode === '5') return sentences.slice(0, Math.min(5, sentences.length));
+    if (sentenceSelectionMode === '10') return sentences.slice(0, Math.min(10, sentences.length));
+    if (sentenceSelectionMode === 'custom') {
+      const from = Math.max(1, Math.min(customRangeFrom, sentences.length));
+      const to = Math.max(from, Math.min(customRangeTo, sentences.length));
+      return sentences.slice(from - 1, to);
+    }
+    return sentences;
+  }, [sentences, sentenceSelectionMode, customRangeFrom, customRangeTo]);
+
+  // Reset index if out of bounds of activeSentences
+  useEffect(() => {
+    if (currentSentenceIndex >= activeSentences.length) {
+      setCurrentSentenceIndex(0);
+      setActiveWordIndex(-1);
+    }
+  }, [activeSentences.length, currentSentenceIndex]);
+
+  // Track REAL per-sentence listening progress (only counts as completed when heardRatio >= 80%)
+  const [listeningProgress, setListeningProgress] = useState<ListeningProgressState>(
+    createListeningProgressState
+  );
   const [totalListeningSeconds, setTotalListeningSeconds] = useState<number>(0);
+
+  // Guard ref so manual pause/skip calling ttsController.stop() never fires false 100% completion in onEnd
+  const manualStopRef = useRef<boolean>(false);
+  const progressTickerRef = useRef<NodeJS.Timeout | null>(null);
+  const playbackSessionRef = useRef<{
+    sentenceId: string;
+    startedAtMs: number;
+    estimatedDurationMs: number;
+    totalTokens: number;
+  } | null>(null);
+
+  // Resolved current voice based on voiceSettings
+  const currentVoice = useMemo(() => resolveSelectedVoice(voiceSettings), [voiceSettings]);
 
   // Student submission state
   const [studentName, setStudentName] = useState<string>(() => {
@@ -193,7 +253,7 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
   const isPlayingRef = useRef<boolean>(false);
   isPlayingRef.current = isPlaying;
 
-  const currentSentence = sentences[currentSentenceIndex] || sentences[0];
+  const currentSentence = activeSentences[currentSentenceIndex] || activeSentences[0];
 
   // Clean dialogue text for current sentence
   const currentSpeechText = useMemo(() => {
@@ -223,10 +283,31 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
     };
   }, [isPlaying]);
 
+  const stopProgressTicker = () => {
+    if (progressTickerRef.current) {
+      clearInterval(progressTickerRef.current);
+      progressTickerRef.current = null;
+    }
+  };
+
+  const stopSpeechSafely = () => {
+    manualStopRef.current = true;
+    // Snapshot real heard ratio right before stopping
+    const session = playbackSessionRef.current;
+    if (session && session.startedAtMs > 0) {
+      const elapsedMs = Math.max(0, performance.now() - session.startedAtMs);
+      const timeRatio = Math.min(0.95, elapsedMs / Math.max(400, session.estimatedDurationMs));
+      setListeningProgress((prev) => updateSentenceListeningRatio(prev, session.sentenceId, timeRatio));
+    }
+    stopProgressTicker();
+    playbackSessionRef.current = null;
+    ttsController.stop();
+  };
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      ttsController.stop();
+      stopSpeechSafely();
       if (fallbackTimerRef.current) {
         clearInterval(fallbackTimerRef.current);
         fallbackTimerRef.current = null;
@@ -237,28 +318,32 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
 
   // Start playing a specific sentence with karaoke word highlight using the independent listening rate
   const playSentenceAtIndex = (index: number, speedOverride?: number) => {
-    if (index < 0 || index >= sentences.length) {
+    if (index < 0 || index >= activeSentences.length) {
+      stopProgressTicker();
+      playbackSessionRef.current = null;
       setIsPlaying(false);
       setActiveWordIndex(-1);
       return;
     }
 
     const effectiveSpeed = speedOverride ?? listeningSpeed;
-    const sentence = sentences[index];
+    const sentence = activeSentences[index];
     setCurrentSentenceIndex(index);
     setIsPlaying(true);
     setActiveWordIndex(0);
     activeWordRef.current = 0;
 
     // Reset boundary tracker and timers
+    manualStopRef.current = false;
     hasNativeBoundaryRef.current = false;
+    stopProgressTicker();
     if (fallbackTimerRef.current) {
       clearInterval(fallbackTimerRef.current);
       fallbackTimerRef.current = null;
     }
 
-    // Mark as listened
-    setListenedSentenceIds((prev) => new Set(prev).add(sentence.id));
+    // Do NOT mark sentence as completed on Play click! Record 0% start instead.
+    setListeningProgress((prev) => updateSentenceListeningRatio(prev, sentence.id, 0));
 
     // Get canonical cleaned dialogue text and pre-calculate tokens
     const spokenText = getCleanDialogueText(sentence);
@@ -330,7 +415,27 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
       voice,
       { ...voiceSettings, rate: effectiveSpeed },
       () => {
-        // onStart: speech has physically started
+        // onStart: speech has physically started -> start real elapsed tracker
+        const startedAtMs = performance.now();
+        playbackSessionRef.current = {
+          sentenceId: sentence.id,
+          startedAtMs,
+          estimatedDurationMs: Math.max(600, totalDurationMs),
+          totalTokens: tokens.length,
+        };
+
+        stopProgressTicker();
+        progressTickerRef.current = setInterval(() => {
+          const session = playbackSessionRef.current;
+          if (!session || !isPlayingRef.current) {
+            stopProgressTicker();
+            return;
+          }
+          const elapsed = Math.max(0, performance.now() - session.startedAtMs);
+          const timeRatio = Math.min(0.95, elapsed / Math.max(600, session.estimatedDurationMs));
+          setListeningProgress((prev) => updateSentenceListeningRatio(prev, session.sentenceId, timeRatio));
+        }, 180);
+
         setIsPlaying(true);
         setActiveWordIndex(0);
         activeWordRef.current = 0;
@@ -340,13 +445,24 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
         }
       },
       () => {
-        // onEnd: sentence finished
+        // onEnd: ignore full credit if triggered by manual stop/pause/skip!
+        stopProgressTicker();
         if (fallbackTimerRef.current) {
           clearInterval(fallbackTimerRef.current);
           fallbackTimerRef.current = null;
         }
         hasNativeBoundaryRef.current = false;
-        setActiveWordIndex(tokens.length); // Briefly mark all words as completed
+
+        if (manualStopRef.current) {
+          manualStopRef.current = false;
+          playbackSessionRef.current = null;
+          return;
+        }
+
+        // Natural finish of audio playback -> 100% listened (>= 80%)
+        playbackSessionRef.current = null;
+        setListeningProgress((prev) => updateSentenceListeningRatio(prev, sentence.id, 1.0));
+        setActiveWordIndex(tokens.length);
 
         // Check if looping single sentence
         if (isLoopingSentence) {
@@ -358,21 +474,23 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
           return;
         }
 
-        // Check if continuous auto-play
-        if (autoPlayFull && index + 1 < sentences.length) {
+        // Check if continuous auto-play within activeSentences
+        if (autoPlayFull && index + 1 < activeSentences.length) {
           setTimeout(() => {
             playSentenceAtIndex(index + 1, effectiveSpeed);
           }, 450);
         } else {
           setIsPlaying(false);
           setActiveWordIndex(-1);
-          if (index + 1 >= sentences.length) {
+          if (index + 1 >= activeSentences.length) {
             playSuccessChime();
           }
         }
       },
-      (err) => {
+      (_err) => {
         // onError
+        stopProgressTicker();
+        playbackSessionRef.current = null;
         if (fallbackTimerRef.current) {
           clearInterval(fallbackTimerRef.current);
           fallbackTimerRef.current = null;
@@ -394,6 +512,10 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
         if (matchedIdx >= 0 && matchedIdx !== activeWordRef.current) {
           activeWordRef.current = matchedIdx;
           setActiveWordIndex(matchedIdx);
+
+          const tokenCount = Math.max(1, currentTokensRef.current.length);
+          const wordRatio = (matchedIdx + 1) / tokenCount;
+          setListeningProgress((prev) => updateSentenceListeningRatio(prev, sentence.id, wordRatio));
         }
       }
     );
@@ -401,7 +523,7 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
 
   const handleTogglePlay = () => {
     if (isPlaying) {
-      ttsController.stop();
+      stopSpeechSafely();
       if (fallbackTimerRef.current) {
         clearInterval(fallbackTimerRef.current);
         fallbackTimerRef.current = null;
@@ -415,7 +537,7 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
   };
 
   const handleReplayCurrent = () => {
-    ttsController.stop();
+    stopSpeechSafely();
     if (fallbackTimerRef.current) {
       clearInterval(fallbackTimerRef.current);
       fallbackTimerRef.current = null;
@@ -426,7 +548,7 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
 
   const handlePrevSentence = () => {
     if (currentSentenceIndex > 0) {
-      ttsController.stop();
+      stopSpeechSafely();
       if (fallbackTimerRef.current) {
         clearInterval(fallbackTimerRef.current);
         fallbackTimerRef.current = null;
@@ -437,8 +559,8 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
   };
 
   const handleNextSentence = () => {
-    if (currentSentenceIndex < sentences.length - 1) {
-      ttsController.stop();
+    if (currentSentenceIndex < activeSentences.length - 1) {
+      stopSpeechSafely();
       if (fallbackTimerRef.current) {
         clearInterval(fallbackTimerRef.current);
         fallbackTimerRef.current = null;
@@ -448,14 +570,27 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
     }
   };
 
-  const handleSentenceClick = (index: number) => {
-    ttsController.stop();
+  const handleSentenceClick = (fullIndex: number) => {
+    stopSpeechSafely();
     if (fallbackTimerRef.current) {
       clearInterval(fallbackTimerRef.current);
       fallbackTimerRef.current = null;
     }
     hasNativeBoundaryRef.current = false;
-    playSentenceAtIndex(index);
+
+    // Check if clicked sentence is in activeSentences
+    const targetSentence = sentences[fullIndex];
+    const activeIndex = activeSentences.findIndex((s) => s.id === targetSentence?.id);
+
+    if (activeIndex >= 0) {
+      playSentenceAtIndex(activeIndex);
+    } else {
+      // If clicked sentence is outside current slice, switch to all and play it
+      setSentenceSelectionMode('all');
+      setTimeout(() => {
+        playSentenceAtIndex(fullIndex);
+      }, 50);
+    }
   };
 
   // Dedicated speed adjustment function (modifies ONLY listeningSpeed, NOT global settings)
@@ -467,7 +602,7 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
     }
     // If currently playing, smoothly replay the current sentence at the newly selected rate
     if (isPlaying) {
-      ttsController.stop();
+      stopSpeechSafely();
       if (fallbackTimerRef.current) {
         clearInterval(fallbackTimerRef.current);
         fallbackTimerRef.current = null;
@@ -489,6 +624,23 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
     ttsController.speak(cleanWord, voice, { ...voiceSettings, rate: Math.min(1.0, listeningSpeed) });
   };
 
+  const listeningCompletion = useMemo(
+    () =>
+      computeListeningCompletion(
+        listeningProgress,
+        activeSentences.map((s) => s.id),
+        LISTENING_COMPLETION_THRESHOLD
+      ),
+    [listeningProgress, activeSentences]
+  );
+
+  const completedSentenceIdSet = useMemo(
+    () => new Set(listeningProgress.completedIds),
+    [listeningProgress.completedIds]
+  );
+
+  const completionPercent = listeningCompletion.percent;
+
   const handleSubmitHomework = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!studentName.trim()) {
@@ -509,16 +661,21 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
         studentName: studentName.trim(),
         studentClass: studentClass.trim(),
         taskType: 'listening',
-        listeningCompleted: true,
+        listeningCompleted: listeningCompletion.isLessonCompleted,
         listeningDurationSeconds: totalListeningSeconds,
+        voiceCount: 0,
+        voiceAvgScore: 0,
+        typingMatchCount: 0,
+        typingMatchScore: 0,
+        dictationCount: 0,
         shadowingCount: 0,
-        shadowingAvgScore: 100,
-        quizScore: 100,
+        shadowingAvgScore: 0,
+        quizScore: 0,
         quizCorrectCount: 0,
         quizTotal: 0,
         wordHuntCompleted: false,
         dictationScore: 0,
-        studentNote: `Đã hoàn thành luyện nghe ${listenedSentenceIds.size}/${sentences.length} câu với English Sub Karaoke. Thời gian nghe: ${Math.round(totalListeningSeconds / 60)} phút.`,
+        studentNote: `Nghe thật ≥80%: ${listeningCompletion.completedCount}/${listeningCompletion.totalCount} câu (${completionPercent}%). Thời gian nghe: ${Math.round(totalListeningSeconds / 60)} phút.`,
       });
 
       setIsSubmitted(true);
@@ -530,10 +687,6 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
       setIsSubmitting(false);
     }
   };
-
-  const completionPercent = Math.round(
-    (listenedSentenceIds.size / Math.max(1, sentences.length)) * 100
-  );
 
   return (
     <div className="space-y-6 animate-fadeIn pb-12">
@@ -556,30 +709,34 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
                   <span>{isEn ? 'Listening & Karaoke Subtitles' : 'Luyện nghe & Phụ đề Karaoke'}</span>
                 </span>
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-indigo-500/30 text-indigo-200 border border-indigo-400/30">
-                  {isConversation ? '💬 Conversation' : '📄 Reading Passage'}
+                  {isConversation
+                    ? isEn ? '💬 Conversation' : '💬 Hội thoại'
+                    : isEn ? '📄 Reading Passage' : '📄 Đoạn văn'}
                 </span>
                 {assignment.className && (
                   <span className="text-[11px] text-slate-300 bg-white/10 px-2.5 py-0.5 rounded-full flex items-center gap-1">
                     <Users className="w-3 h-3 text-pink-300" />
-                    <span>Lớp: {assignment.className}</span>
+                    <span>{isEn ? 'Class:' : 'Lớp:'} {assignment.className}</span>
                   </span>
                 )}
                 {assignment.dueDate && (
                   <span className="text-[11px] text-amber-300 bg-amber-500/20 px-2.5 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1">
                     <Calendar className="w-3 h-3" />
-                    <span>Hạn: {assignment.dueDate}</span>
+                    <span>{isEn ? 'Due:' : 'Hạn:'} {assignment.dueDate}</span>
                   </span>
                 )}
               </div>
 
-              <h1 className="font-heading text-xl sm:text-2xl font-black text-white tracking-tight">
+              <h1 className="font-heading text-xl sm:text-2xl font-black text-white tracking-tight break-words">
                 {assignment.title}
               </h1>
 
               {assignment.teacherNotes && (
                 <div className="mt-2 text-xs text-indigo-200/90 italic flex items-start gap-1.5 bg-white/5 p-2 rounded-xl border border-white/10 max-w-2xl">
                   <MessageSquare className="w-3.5 h-3.5 text-pink-400 shrink-0 mt-0.5" />
-                  <span><strong>Lời dặn của cô:</strong> "{assignment.teacherNotes}"</span>
+                  <span>
+                    <strong>{isEn ? "Teacher's Note:" : 'Lời dặn của cô:'}</strong> "{assignment.teacherNotes}"
+                  </span>
                 </div>
               )}
             </div>
@@ -631,12 +788,28 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
           isPlaying ? 'bg-pink-500/25 opacity-100' : 'bg-indigo-500/10 opacity-40'
         }`} />
 
-        {/* Top bar: Sentence counter, format tag & audio indicator */}
-        <div className="flex items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-800 text-xs text-slate-300 relative z-10">
-          <div className="flex items-center gap-2">
+        {/* Top bar: Sentence counter, format tag, sentence count selector & audio indicator */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-800 text-xs text-slate-300 relative z-10">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="px-3 py-1 rounded-full bg-indigo-500/30 text-indigo-200 font-extrabold border border-indigo-400/30 text-xs">
-              {isEn ? 'Sentence' : 'Câu'} {currentSentenceIndex + 1} / {sentences.length}
+              {isEn ? 'Sentence' : 'Câu'} {currentSentenceIndex + 1} / {activeSentences.length}
+              {sentenceSelectionMode !== 'all' && ` (tổng ${sentences.length})`}
             </span>
+
+            {/* Quick Button to open Custom Sentence Count */}
+            <button
+              type="button"
+              onClick={() => setShowCustomRangeBox(!showCustomRangeBox)}
+              className="px-2.5 py-1 rounded-full bg-pink-500/20 hover:bg-pink-500/30 text-pink-300 font-bold border border-pink-400/40 text-[11px] flex items-center gap-1 transition-all hover:scale-102"
+              title={isEn ? 'Choose number of sentences' : 'Tự chọn số câu luyện tập'}
+            >
+              <span>🔢</span>
+              <span>{isEn ? 'Sentence Count' : 'Tự chọn số câu'}</span>
+              <span className="text-[10px] bg-pink-400/30 px-1.5 py-0.2 rounded-md">
+                {activeSentences.length}
+              </span>
+            </button>
+
             {currentSentence?.speaker && (
               <span className="px-3 py-1 rounded-full bg-pink-500/30 text-pink-200 font-bold border border-pink-400/40 text-xs flex items-center gap-1.5">
                 <span>🗣️</span>
@@ -835,6 +1008,241 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
               </button>
             </div>
           </div>
+
+          {/* Accent & Device-Real Natural Voice Selector */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 bg-slate-800/80 p-2.5 rounded-2xl border border-slate-700/80 text-xs">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[11px] font-black text-pink-300 flex items-center gap-1 mr-1">
+                <span>🗣️</span>
+                <span>{isEn ? 'Device Voices:' : 'Giọng thật trên máy:'}</span>
+              </span>
+              {(() => {
+                const allV =
+                  typeof window !== 'undefined' && 'speechSynthesis' in window
+                    ? window.speechSynthesis.getVoices()
+                    : [];
+                const devicePresets = getMatchingRecommendedSpecs(allV);
+                if (devicePresets.length === 0) {
+                  return (
+                    <span className="text-[11px] text-slate-300">
+                      {isEn
+                        ? 'Using system default voice (no extra accents detected on device)'
+                        : 'Đang dùng giọng mặc định của thiết bị'}
+                    </span>
+                  );
+                }
+                return devicePresets.map(({ spec, deviceVoice }) => {
+                  const isSelected =
+                    currentVoice?.name === deviceVoice.name ||
+                    (voiceSettings.accent === spec.accent && voiceSettings.gender === spec.gender);
+                  return (
+                    <button
+                      key={spec.id}
+                      type="button"
+                      onClick={() => {
+                        const best = findStrictDeviceVoiceForSpec(spec, allV);
+                        const candidate = filterVoices(allV, spec.accent, spec.gender, 'all');
+                        let idx = 0;
+                        if (best && candidate.length > 0) {
+                          const f = candidate.findIndex((v) => v.name === best.name);
+                          if (f >= 0) idx = f;
+                        }
+                        onUpdateVoiceSettings?.({
+                          ...voiceSettings,
+                          accent: spec.accent,
+                          gender: spec.gender,
+                          age: 'all',
+                          voiceIndex: idx,
+                        });
+                        if (isPlaying) {
+                          ttsController.stop();
+                          setTimeout(() => {
+                            playSentenceAtIndex(currentSentenceIndex);
+                          }, 120);
+                        }
+                      }}
+                      className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1 shrink-0 ${
+                        isSelected
+                          ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-sm ring-1 ring-pink-300'
+                          : 'bg-slate-700/80 text-slate-300 hover:text-white hover:bg-slate-700'
+                      }`}
+                      title={`${deviceVoice.name} (${deviceVoice.lang})`}
+                    >
+                      <span>{spec.flag}</span>
+                      <span>{isEn ? spec.accentLabelEn : spec.accentLabelVi}</span>
+                      <span className="text-[10px] opacity-80 truncate max-w-[90px]">
+                        ({deviceVoice.name.replace(/Microsoft|Google|\(.*\)/gi, '').trim().split(' ')[0]})
+                      </span>
+                    </button>
+                  );
+                });
+              })()}
+            </div>
+
+            <div className="flex items-center gap-1.5 text-[11px] text-slate-300 min-w-0">
+              <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span className="truncate max-w-[180px] sm:max-w-[220px]" title={currentVoice?.name}>
+                {currentVoice ? currentVoice.name.replace(/\(.*\)/, '').trim() : isEn ? 'System Voice' : 'Giọng thiết bị'}
+              </span>
+            </div>
+          </div>
+
+          {/* ========================================================================= */}
+          {/* DEDICATED SENTENCE COUNT CONTROLLER (NÚT TỰ CHỌN SỐ CÂU)                  */}
+          {/* ========================================================================= */}
+          <div className="bg-slate-800/80 p-3 rounded-2xl border border-slate-700/80 text-xs space-y-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="p-1 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
+                  <Sliders className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-xs font-black uppercase tracking-wider text-slate-200">
+                  {isEn ? 'Choose Sentence Count:' : 'Tự chọn số câu:'}
+                </span>
+                <span className="px-2.5 py-0.5 rounded-lg bg-indigo-500/25 text-indigo-200 border border-indigo-400/40 text-xs font-black font-mono">
+                  {activeSentences.length}/{sentences.length} {isEn ? 'sentences' : 'câu'}
+                </span>
+                {sentenceSelectionMode !== 'all' && (
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-400/30">
+                    {sentenceSelectionMode === 'custom'
+                      ? `${isEn ? 'From sentence' : 'Từ câu'} ${Math.max(1, customRangeFrom)} - ${Math.min(sentences.length, customRangeTo)}`
+                      : `${sentenceSelectionMode} ${isEn ? 'sentences' : 'câu đầu'}`}
+                  </span>
+                )}
+              </div>
+
+              {/* Quick Presets */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSentenceSelectionMode('all');
+                    setShowCustomRangeBox(false);
+                    if (isPlaying) ttsController.stop();
+                  }}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all ${
+                    sentenceSelectionMode === 'all'
+                      ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-xs ring-1 ring-pink-300 font-black'
+                      : 'bg-slate-700/80 text-slate-300 hover:text-white hover:bg-slate-700'
+                  }`}
+                >
+                  {isEn ? `All (${sentences.length})` : `Tất cả (${sentences.length} câu)`}
+                </button>
+
+                {sentences.length >= 3 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSentenceSelectionMode('3');
+                      setShowCustomRangeBox(false);
+                      if (isPlaying) ttsController.stop();
+                    }}
+                    className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all ${
+                      sentenceSelectionMode === '3'
+                        ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-xs ring-1 ring-pink-300 font-black'
+                        : 'bg-slate-700/80 text-slate-300 hover:text-white hover:bg-slate-700'
+                    }`}
+                  >
+                    {isEn ? '3 sentences' : '3 câu'}
+                  </button>
+                )}
+
+                {sentences.length >= 5 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSentenceSelectionMode('5');
+                      setShowCustomRangeBox(false);
+                      if (isPlaying) ttsController.stop();
+                    }}
+                    className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all ${
+                      sentenceSelectionMode === '5'
+                        ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-xs ring-1 ring-pink-300 font-black'
+                        : 'bg-slate-700/80 text-slate-300 hover:text-white hover:bg-slate-700'
+                    }`}
+                  >
+                    {isEn ? '5 sentences' : '5 câu'}
+                  </button>
+                )}
+
+                {sentences.length >= 10 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSentenceSelectionMode('10');
+                      setShowCustomRangeBox(false);
+                      if (isPlaying) ttsController.stop();
+                    }}
+                    className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all ${
+                      sentenceSelectionMode === '10'
+                        ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-xs ring-1 ring-pink-300 font-black'
+                        : 'bg-slate-700/80 text-slate-300 hover:text-white hover:bg-slate-700'
+                    }`}
+                  >
+                    {isEn ? '10 sentences' : '10 câu'}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setShowCustomRangeBox(!showCustomRangeBox)}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1 ${
+                    sentenceSelectionMode === 'custom' || showCustomRangeBox
+                      ? 'bg-amber-500 text-slate-900 font-black shadow-xs ring-2 ring-amber-300'
+                      : 'bg-slate-700/80 text-slate-300 hover:text-white hover:bg-slate-700'
+                  }`}
+                >
+                  <span>⚙️</span>
+                  <span>{isEn ? 'Custom Range...' : 'Tự chọn số câu...'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Custom Range Configuration Box */}
+            {showCustomRangeBox && (
+              <div className="pt-2.5 mt-2 border-t border-slate-700/70 flex flex-wrap items-center gap-3 animate-fadeIn">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-slate-300 font-bold">{isEn ? 'From sentence:' : 'Từ câu:'}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={sentences.length}
+                    value={customRangeFrom}
+                    onChange={(e) => setCustomRangeFrom(Math.max(1, Math.min(sentences.length, parseInt(e.target.value) || 1)))}
+                    className="w-16 px-2 py-1 text-xs text-center font-bold bg-slate-900 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-pink-400"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-slate-300 font-bold">{isEn ? 'To sentence:' : 'Đến câu:'}</span>
+                  <input
+                    type="number"
+                    min={customRangeFrom}
+                    max={sentences.length}
+                    value={customRangeTo}
+                    onChange={(e) => setCustomRangeTo(Math.max(customRangeFrom, Math.min(sentences.length, parseInt(e.target.value) || customRangeFrom)))}
+                    className="w-16 px-2 py-1 text-xs text-center font-bold bg-slate-900 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-pink-400"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSentenceSelectionMode('custom');
+                    setShowCustomRangeBox(false);
+                    if (isPlaying) ttsController.stop();
+                  }}
+                  className="px-3.5 py-1 rounded-xl text-xs font-black text-slate-900 bg-amber-400 hover:bg-amber-300 transition-all shadow-xs"
+                >
+                  ✓ {isEn ? 'Apply' : 'Áp dụng'}
+                </button>
+
+                <span className="text-[11px] text-slate-400 italic">
+                  ({isEn ? 'Total' : 'Tổng'}: {Math.max(1, customRangeTo - customRangeFrom + 1)} {isEn ? 'sentences' : 'câu'})
+                </span>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ========================================================================= */}
@@ -846,17 +1254,17 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
             <span>{isEn ? 'Press Play to start synchronized karaoke audio' : 'Bấm Play để nghe phụ đề Karaoke'}</span>
           </div>
 
-          {/* Center Main Playback Buttons */}
-          <div className="flex items-center gap-3">
+          {/* Center Main Playback Buttons — 360px safe */}
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
             {/* Previous Sentence */}
             <button
               type="button"
               onClick={handlePrevSentence}
               disabled={currentSentenceIndex === 0}
               title={isEn ? 'Previous sentence' : 'Câu trước'}
-              className="p-3 rounded-2xl bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white transition-all disabled:opacity-30 disabled:pointer-events-none"
+              className="p-2.5 sm:p-3 rounded-2xl bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white transition-all disabled:opacity-30 disabled:pointer-events-none"
             >
-              <SkipBack className="w-5 h-5" />
+              <SkipBack className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
 
             {/* Replay Current */}
@@ -864,7 +1272,7 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
               type="button"
               onClick={handleReplayCurrent}
               title={isEn ? 'Replay this sentence' : 'Phát lại câu này'}
-              className="p-3 rounded-2xl bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white transition-all"
+              className="p-2.5 sm:p-3 rounded-2xl bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white transition-all"
             >
               <RotateCcw className="w-4 h-4" />
             </button>
@@ -873,7 +1281,7 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
             <button
               type="button"
               onClick={handleTogglePlay}
-              className={`px-7 py-4 rounded-3xl font-heading font-black text-sm sm:text-base flex items-center gap-2.5 transition-all shadow-xl hover:scale-105 ${
+              className={`px-4 sm:px-7 py-3 sm:py-4 rounded-3xl font-heading font-black text-xs sm:text-base flex items-center gap-2 transition-all shadow-xl hover:scale-105 ${
                 isPlaying
                   ? 'bg-rose-500 text-white shadow-rose-500/40 ring-4 ring-rose-400/30'
                   : 'bg-gradient-to-r from-pink-500 via-rose-500 to-amber-500 text-white shadow-pink-500/40 hover:from-pink-400 hover:to-amber-400 ring-4 ring-pink-400/30'
@@ -881,12 +1289,12 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
             >
               {isPlaying ? (
                 <>
-                  <Pause className="w-6 h-6 fill-white" />
+                  <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-white" />
                   <span>{isEn ? 'PAUSE' : 'TẠM DỪNG'}</span>
                 </>
               ) : (
                 <>
-                  <Play className="w-6 h-6 fill-white" />
+                  <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-white" />
                   <span>{isEn ? 'PLAY KARAOKE' : 'NGHE KARAOKE'}</span>
                 </>
               )}
@@ -896,11 +1304,11 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
             <button
               type="button"
               onClick={handleNextSentence}
-              disabled={currentSentenceIndex >= sentences.length - 1}
+              disabled={currentSentenceIndex >= activeSentences.length - 1}
               title={isEn ? 'Next sentence' : 'Câu tiếp theo'}
-              className="p-3 rounded-2xl bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white transition-all disabled:opacity-30 disabled:pointer-events-none"
+              className="p-2.5 sm:p-3 rounded-2xl bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white transition-all disabled:opacity-30 disabled:pointer-events-none"
             >
-              <SkipForward className="w-5 h-5" />
+              <SkipForward className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
           </div>
 
@@ -962,18 +1370,32 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
             </p>
           </div>
 
-          <div className="flex items-center gap-2 text-xs text-slate-600 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
-            <span>{sentences.length} {isConversation ? 'lượt thoại' : 'câu'}</span>
+          <div className="flex items-center gap-2 flex-wrap text-xs text-slate-600 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+            <span>{isEn ? 'Practicing:' : 'Đang chọn:'} <strong className="text-pink-600 font-extrabold">{activeSentences.length}/{sentences.length} {isConversation ? 'lượt thoại' : 'câu'}</strong></span>
+            {sentenceSelectionMode !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setSentenceSelectionMode('all')}
+                className="text-[10px] text-pink-600 underline font-bold hover:text-pink-800"
+              >
+                ({isEn ? 'Reset to all' : 'Xem & nghe tất cả'})
+              </button>
+            )}
             <span>•</span>
-            <span className="font-bold text-teal-700">{listenedSentenceIds.size} đã nghe</span>
+            <span className="font-bold text-teal-700">
+              {listeningCompletion.completedCount}/{listeningCompletion.totalCount}{' '}
+              {isEn ? 'heard ≥80%' : 'đã nghe ≥80%'}
+            </span>
           </div>
         </div>
 
         {/* Passage Sentences List */}
         <div className="space-y-3 pt-2">
           {sentences.map((sent, idx) => {
-            const isCurrent = idx === currentSentenceIndex;
-            const isListened = listenedSentenceIds.has(sent.id);
+            const isCurrent = activeSentences[currentSentenceIndex]?.id === sent.id;
+            const isInActiveSet = activeSentences.some((s) => s.id === sent.id);
+            const isListened = completedSentenceIdSet.has(sent.id);
+            const sentHeardPercent = Math.round((listeningProgress.heardRatioById[sent.id] ?? 0) * 100);
             const sentTokens = tokenizeSentenceWords(getCleanDialogueText(sent));
 
             return (
@@ -983,6 +1405,8 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
                 className={`p-4 rounded-2xl transition-all cursor-pointer border flex items-start gap-3.5 group ${
                   isCurrent
                     ? 'bg-gradient-to-r from-pink-50/90 via-rose-50/70 to-amber-50/60 border-pink-400 ring-2 ring-pink-200 shadow-md scale-[1.01]'
+                    : !isInActiveSet
+                    ? 'bg-slate-50/40 border-slate-100 opacity-60 hover:opacity-100 hover:border-pink-200'
                     : isListened
                     ? 'bg-white border-slate-200 hover:border-pink-300 hover:bg-pink-50/30'
                     : 'bg-slate-50/60 border-slate-200 hover:border-pink-300 hover:bg-pink-50/30'
@@ -1005,9 +1429,13 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
                       <span>{idx + 1}</span>
                     )}
                   </div>
-                  {isListened && (
+                  {isListened ? (
                     <span className="text-[10px] text-emerald-600 font-extrabold">✓</span>
-                  )}
+                  ) : sentHeardPercent > 0 ? (
+                    <span className="text-[9px] text-amber-600 font-bold" title="Cần nghe ≥80%">
+                      {sentHeardPercent}%
+                    </span>
+                  ) : null}
                 </div>
 
                 {/* Sentence Content */}
@@ -1090,17 +1518,19 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
         <button
           type="button"
           onClick={() => setShowSubmitModal(true)}
-          className="px-6 py-3 rounded-2xl font-heading font-black text-sm text-emerald-950 bg-amber-300 hover:bg-amber-200 shadow-md hover:shadow-lg transition-all hover:scale-105 shrink-0"
+          className="px-5 py-3 rounded-2xl font-heading font-black text-xs sm:text-sm text-emerald-950 bg-amber-300 hover:bg-amber-200 shadow-md hover:shadow-lg transition-all hover:scale-105 shrink-0"
         >
-          {isSubmitted ? '✓ ĐÃ NỘP BÀI THÀNH CÔNG' : '📤 NỘP BÀI CHO GIÁO VIÊN NGAY'}
+          {isSubmitted
+            ? isEn ? '✓ SUBMITTED SUCCESSFULLY' : '✓ ĐÃ NỘP BÀI THÀNH CÔNG'
+            : isEn ? '📤 SUBMIT HOMEWORK NOW' : '📤 NỘP BÀI CHO GIÁO VIÊN NGAY'}
         </button>
       </section>
 
       {/* 7. SUBMIT HOMEWORK MODAL */}
       {showSubmitModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
           <div
-            className="bg-white rounded-3xl w-full max-w-md p-6 shadow-2xl border border-pink-200 relative overflow-hidden"
+            className="bg-white rounded-3xl w-full max-w-md p-5 sm:p-6 shadow-2xl border border-pink-200 relative overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-3 pb-3 border-b border-pink-100">
@@ -1109,11 +1539,11 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
                 alt="Ms Mèo"
                 className="w-10 h-10 rounded-full border border-pink-300 object-cover"
               />
-              <div>
-                <h4 className="font-heading font-black text-lg text-slate-900">
+              <div className="min-w-0">
+                <h4 className="font-heading font-black text-base sm:text-lg text-slate-900 truncate">
                   {isEn ? 'Submit Listening Homework' : 'Nộp bài Luyện nghe Karaoke'}
                 </h4>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500 truncate">
                   {assignment.title}
                 </p>
               </div>
@@ -1128,40 +1558,52 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Họ và tên học sinh <span className="text-rose-500">*</span>
+                  {isEn ? 'Student Full Name' : 'Họ và tên học sinh'} <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
                   value={studentName}
                   onChange={(e) => setStudentName(e.target.value)}
-                  placeholder="Ví dụ: Nguyễn Văn An"
+                  placeholder={isEn ? 'e.g. Nguyen Van An' : 'Ví dụ: Nguyễn Văn An'}
                   className="w-full text-xs border border-slate-300 focus:border-pink-500 rounded-xl p-2.5 focus:ring-1 focus:ring-pink-500"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Lớp học
+                  {isEn ? 'Class Name' : 'Lớp học'}
                 </label>
                 <input
                   type="text"
                   value={studentClass}
                   onChange={(e) => setStudentClass(e.target.value)}
-                  placeholder="Ví dụ: 12A1"
+                  placeholder={isEn ? 'e.g. 12A1' : 'Ví dụ: 12A1'}
                   className="w-full text-xs border border-slate-300 focus:border-pink-500 rounded-xl p-2.5 focus:ring-1 focus:ring-pink-500"
                 />
               </div>
 
               {/* Progress Summary Card */}
               <div className="p-3 bg-pink-50 border border-pink-200 rounded-2xl text-xs space-y-1 text-slate-700">
-                <div className="flex justify-between">
-                  <span>Tiến độ đã nghe:</span>
-                  <strong className="text-pink-600">{listenedSentenceIds.size} / {sentences.length} câu ({completionPercent}%)</strong>
+                <div className="flex justify-between gap-2">
+                  <span>{isEn ? 'Listening progress (≥80% per sentence):' : 'Tiến độ đã nghe (≥80% mỗi câu):'}</span>
+                  <strong className="text-pink-600 shrink-0">
+                    {listeningCompletion.completedCount} / {listeningCompletion.totalCount} ({completionPercent}%)
+                  </strong>
                 </div>
-                <div className="flex justify-between">
-                  <span>Thời gian luyện nghe:</span>
-                  <strong className="text-pink-600">{Math.round(totalListeningSeconds / 60)} phút ({totalListeningSeconds}s)</strong>
+                <div className="flex justify-between gap-2">
+                  <span>{isEn ? 'Completion status:' : 'Trạng thái hoàn thành nghe:'}</span>
+                  <strong className={listeningCompletion.isLessonCompleted ? 'text-emerald-600' : 'text-amber-700'}>
+                    {listeningCompletion.isLessonCompleted
+                      ? isEn ? '✓ Completed (≥80%)' : '✓ Đạt yêu cầu (≥80%)'
+                      : isEn ? 'Under 80%' : 'Chưa đủ 80%'}
+                  </strong>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span>{isEn ? 'Time spent:' : 'Thời gian luyện nghe:'}</span>
+                  <strong className="text-pink-600">
+                    {Math.round(totalListeningSeconds / 60)} {isEn ? 'min' : 'phút'} ({totalListeningSeconds}s)
+                  </strong>
                 </div>
               </div>
 
@@ -1171,7 +1613,7 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
                   onClick={() => setShowSubmitModal(false)}
                   className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
                 >
-                  Đóng
+                  {isEn ? 'Close' : 'Đóng'}
                 </button>
                 <button
                   type="submit"
@@ -1179,11 +1621,11 @@ export const StudentListeningKaraokeView: React.FC<StudentListeningKaraokeViewPr
                   className="px-5 py-2.5 rounded-xl text-xs font-extrabold text-white bg-gradient-to-r from-pink-500 via-rose-500 to-amber-500 hover:from-pink-600 hover:to-rose-600 shadow-md transition-all flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {isSubmitting ? (
-                    <span>Đang nộp...</span>
+                    <span>{isEn ? 'Submitting...' : 'Đang nộp...'}</span>
                   ) : (
                     <>
                       <Send className="w-3.5 h-3.5" />
-                      <span>Xác nhận Nộp bài</span>
+                      <span>{isEn ? 'Confirm Submission' : 'Xác nhận Nộp bài'}</span>
                     </>
                   )}
                 </button>
